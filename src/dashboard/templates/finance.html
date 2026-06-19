@@ -3,43 +3,62 @@
 {% block title %}Finance — Alfred{% endblock %}
 
 {% block extra_style %}
+/* ── Summary row ── */
 .stat-row { display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
-.stat-card { flex:1; min-width:160px; }
+.stat-card { flex:1; min-width:150px; }
 
-.two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
-@media(max-width:900px) { .two-col { grid-template-columns:1fr; } }
+/* ── Account selector cards ── */
+.acct-cards {
+  display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;
+}
+.acct-card {
+  background:var(--surface); border:2px solid var(--border);
+  border-radius:var(--radius); padding:12px 16px;
+  cursor:pointer; transition:border-color .12s, box-shadow .12s;
+  min-width:160px; flex:1;
+}
+.acct-card:hover { border-color:var(--border2); box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.acct-card.active { border-color:var(--accent); box-shadow:0 0 0 3px rgba(91,99,232,.12); }
+.acct-card .ac-name { font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+.acct-card .ac-bal  { font-family:var(--font-num); font-size:18px; font-weight:700; }
+.acct-card .ac-bal.red    { color:var(--red); }
+.acct-card .ac-bal.green  { color:var(--green); }
+.acct-card .ac-sub  { font-size:10px; color:var(--muted); margin-top:2px; }
+.acct-card .ac-spend{ font-size:11px; color:var(--text2); margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
+.acct-card .ac-spend strong { color:var(--text); }
 
+/* ── Two-column layout ── */
+.two-col { display:grid; grid-template-columns:340px 1fr; gap:16px; }
+@media(max-width:960px) { .two-col { grid-template-columns:1fr; } }
+
+/* ── Spending breakdown ── */
 .budget-row {
   display:flex; align-items:center; gap:10px;
   padding:9px 16px; border-bottom:1px solid var(--border);
 }
 .budget-row:last-child { border-bottom:none; }
-.budget-label { flex:0 0 180px; font-size:12px; font-weight:500; }
+.budget-label { flex:0 0 160px; font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .budget-bar-wrap { flex:1; background:var(--surface2); border-radius:999px; height:6px; overflow:hidden; }
-.budget-bar { height:100%; border-radius:999px; transition:width .4s; }
+.budget-bar { height:100%; border-radius:999px; transition:width .3s; }
 .budget-bar.green  { background:var(--green); }
 .budget-bar.yellow { background:var(--yellow); }
 .budget-bar.red    { background:var(--red); }
-.budget-nums { flex:0 0 140px; text-align:right; font-family:var(--font-num); font-size:11px; color:var(--text2); }
+.budget-bar.blue   { background:var(--blue); }
+.budget-nums { flex:0 0 110px; text-align:right; font-family:var(--font-num); font-size:11px; color:var(--text2); }
 .budget-nums strong { color:var(--text); }
 
-.acct-badge {
-  display:inline-flex; align-items:center;
-  padding:1px 7px; border-radius:9999px;
-  font-size:10px; font-weight:600;
+/* ── Transaction table ── */
+.txn-name { font-weight:500; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cat-pill {
+  display:inline-block; padding:1px 7px; border-radius:9999px;
+  font-size:10px; font-weight:600; background:var(--surface2); color:var(--text2);
 }
-.acct-badge.credit { background:var(--red-bg);    color:var(--red); }
-.acct-badge.depository { background:var(--blue-bg); color:var(--blue); }
-.acct-badge.investment { background:rgba(124,131,245,.12); color:var(--accent); }
-.acct-badge.brokerage  { background:rgba(124,131,245,.12); color:var(--accent); }
-
-.refresh-btn {
-  background:var(--surface2); border:1px solid var(--border);
-  color:var(--text2); padding:4px 12px; border-radius:var(--radius-sm);
-  cursor:pointer; font-size:11px; font-weight:600; font-family:var(--font-ui);
-  transition:background .12s;
+.search-bar {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:5px 10px; border-radius:var(--radius); font-size:12px; width:220px;
+  font-family:var(--font-ui);
 }
-.refresh-btn:hover { background:var(--surface3); color:var(--text); }
+.search-bar:focus { outline:none; border-color:var(--accent); }
 {% endblock %}
 
 {% block content %}
@@ -49,60 +68,62 @@
 </div>
 
 <!-- Summary stat cards -->
-<div class="stat-row" id="stat-row">
+<div class="stat-row">
   <div class="stat-card"><div class="label">Net Worth</div><div class="value" id="s-net">—</div></div>
   <div class="stat-card"><div class="label">Total Assets</div><div class="value green" id="s-assets">—</div></div>
   <div class="stat-card"><div class="label">Total Debt</div><div class="value red" id="s-debt">—</div></div>
   <div class="stat-card"><div class="label">Month Spend</div><div class="value" id="s-spend">—</div></div>
 </div>
 
-<div class="two-col">
+<!-- Account selector -->
+<div class="acct-cards" id="acct-cards"></div>
 
-  <!-- Budget progress -->
+<!-- Detail view -->
+<div class="two-col">
   <div>
     <div class="card">
-      <div class="card-header"><h3>Budget — This Month</h3></div>
-      <div id="budget-body"></div>
-      <div class="empty" id="budget-empty" style="display:none">No spending data.</div>
-    </div>
-
-    <!-- Accounts -->
-    <div class="card">
-      <div class="card-header"><h3>Accounts</h3></div>
-      <table>
-        <thead><tr><th>Institution</th><th>Account</th><th>Type</th><th style="text-align:right">Balance</th><th style="text-align:right">Available</th></tr></thead>
-        <tbody id="accounts-body"></tbody>
-      </table>
-      <div class="empty" id="accounts-empty" style="display:none">No account data.</div>
+      <div class="card-header"><h3 id="breakdown-title">Spending Breakdown</h3></div>
+      <div id="breakdown-body"></div>
+      <div class="empty" id="breakdown-empty" style="display:none">No spending data for this account.</div>
     </div>
   </div>
 
-  <!-- Top transactions -->
   <div>
     <div class="card">
       <div class="card-header">
-        <h3>Top Transactions — This Month</h3>
+        <h3 id="txn-title">Transactions</h3>
+        <input class="search-bar" id="txn-search" placeholder="Search…" oninput="filterTxns()">
       </div>
       <table>
-        <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th style="text-align:right">Amount</th></tr></thead>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Merchant</th>
+            <th>Category</th>
+            <th>Account</th>
+            <th style="text-align:right">Amount</th>
+          </tr>
+        </thead>
         <tbody id="txn-body"></tbody>
       </table>
-      <div class="empty" id="txn-empty" style="display:none">No transactions yet.</div>
+      <div class="empty" id="txn-empty" style="display:none">No transactions found.</div>
     </div>
   </div>
-
 </div>
 
 <script>
 let _data = null;
+let _selectedInst = '__all__';
 
 function fmt(n) {
   if (n == null) return '—';
   return '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
 }
-
 function titleCase(s) {
-  return s.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  return (s||'').replace(/_/g,' ').toLowerCase().replace(/\b\w/g, c=>c.toUpperCase());
+}
+function instLabel(k) {
+  return k.replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
 }
 
 async function loadFinance() {
@@ -112,112 +133,160 @@ async function loadFinance() {
     document.getElementById('finance-subtitle').textContent = _data.error;
     return;
   }
-  render(_data);
+  renderAll();
 }
 
-function render(d) {
+function renderAll() {
+  const d = _data;
   const s = d.summary || {};
   const updated = d.updated_at ? d.updated_at.slice(0,16).replace('T',' ') : '';
   document.getElementById('finance-subtitle').textContent = updated ? `Last updated ${updated}` : '';
 
-  document.getElementById('s-net').textContent    = fmt(s.net_worth);
+  // Summary stats
   document.getElementById('s-assets').textContent = fmt(s.total_assets);
   document.getElementById('s-debt').textContent   = fmt(s.total_debt);
   document.getElementById('s-spend').textContent  = fmt(s.total_discretionary);
-
   const netEl = document.getElementById('s-net');
-  netEl.className = 'value ' + (s.net_worth >= 0 ? 'green' : 'red');
+  netEl.textContent = fmt(s.net_worth);
+  netEl.className   = 'value ' + (s.net_worth >= 0 ? 'green' : 'red');
 
-  renderBudgets(d.spending || {}, d.budgets || {});
-  renderAccounts(d.balances || {});
-  renderTransactions(d.transactions || []);
+  renderAccountCards();
+  renderBreakdown();
+  renderTransactions();
 }
 
-function renderBudgets(spending, budgets) {
-  const SKIP = new Set(['TRANSFER_IN','TRANSFER_OUT','LOAN_PAYMENTS','BANK_FEES']);
-  const body = document.getElementById('budget-body');
+function renderAccountCards() {
+  const d = _data;
+  const container = document.getElementById('acct-cards');
+  container.innerHTML = '';
+
+  // "All" card
+  const allSpend = Object.values(d.spending_by_institution || {}).reduce((sum, cats) => {
+    return sum + Object.values(cats).reduce((s, v) => s + v, 0);
+  }, 0);
+  container.appendChild(_makeCard('__all__', 'All Accounts', d.summary.total_assets - d.summary.total_debt, allSpend, null, true));
+
+  // Per-institution cards
+  const balances = d.balances || {};
+  Object.entries(balances).forEach(([inst, accounts]) => {
+    if (!accounts || accounts[0]?.error) return;
+    // Total balance for this institution
+    let totalBal = 0, isDebt = false, subtype = '';
+    accounts.forEach(acct => {
+      const cur = acct.current || 0;
+      if (acct.type === 'credit') { totalBal -= cur; isDebt = true; }
+      else totalBal += cur;
+      if (!subtype && acct.subtype) subtype = acct.subtype;
+    });
+    // Spend for this institution
+    const instSpend = Object.values(d.spending_by_institution?.[inst] || {}).reduce((s,v)=>s+v, 0);
+    container.appendChild(_makeCard(inst, instLabel(inst), totalBal, instSpend, subtype));
+  });
+}
+
+function _makeCard(key, label, balance, spend, subtype, isAll) {
+  const card = document.createElement('div');
+  card.className = 'acct-card' + (_selectedInst === key ? ' active' : '');
+  const balColor = balance < 0 ? 'red' : 'green';
+  const balPrefix = balance < 0 ? '-' : '';
+  card.innerHTML = `
+    <div class="ac-name">${label}</div>
+    <div class="ac-bal ${balColor}">${balPrefix}${fmt(Math.abs(balance))}</div>
+    ${subtype ? `<div class="ac-sub">${titleCase(subtype)}</div>` : ''}
+    ${spend > 0 ? `<div class="ac-spend"><strong>${fmt(spend)}</strong> spent this month</div>` : ''}`;
+  card.addEventListener('click', () => {
+    _selectedInst = key;
+    document.querySelectorAll('.acct-card').forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+    renderBreakdown();
+    renderTransactions();
+  });
+  return card;
+}
+
+function renderBreakdown() {
+  const d = _data;
+  const body = document.getElementById('breakdown-body');
+  const emptyEl = document.getElementById('breakdown-empty');
   body.innerHTML = '';
 
-  // Show budgeted categories first, then any unbudgeted spending
-  const allCats = new Set([...Object.keys(budgets), ...Object.keys(spending).filter(k=>!SKIP.has(k))]);
-  const rows = [...allCats].map(cat => ({
-    cat,
-    spent: spending[cat] || 0,
-    budget: budgets[cat] || null,
-  })).sort((a,b) => {
-    // budgeted first, then by % spent desc
-    const aHas = a.budget != null, bHas = b.budget != null;
-    if (aHas !== bHas) return aHas ? -1 : 1;
-    const aPct = a.budget ? a.spent/a.budget : 0;
-    const bPct = b.budget ? b.spent/b.budget : 0;
-    return bPct - aPct;
-  });
+  let spending = {};
+  if (_selectedInst === '__all__') {
+    spending = d.spending || {};
+    document.getElementById('breakdown-title').textContent = 'Spending Breakdown — All';
+  } else {
+    spending = d.spending_by_institution?.[_selectedInst] || {};
+    document.getElementById('breakdown-title').textContent = `Spending — ${instLabel(_selectedInst)}`;
+  }
 
-  rows.forEach(({cat, spent, budget}) => {
-    const pct = budget ? Math.min(spent/budget, 1) : 0;
-    const cls = pct >= 1 ? 'red' : pct >= 0.8 ? 'yellow' : 'green';
-    const pctStr = budget ? (pct*100).toFixed(0)+'%' : '';
+  const budgets = d.budgets || {};
+  const SKIP = new Set(['TRANSFER_IN','TRANSFER_OUT','LOAN_PAYMENTS','BANK_FEES']);
+  const rows = Object.entries(spending)
+    .filter(([cat]) => !SKIP.has(cat))
+    .sort(([,a],[,b]) => b - a);
+
+  if (!rows.length) { emptyEl.style.display='block'; return; }
+  emptyEl.style.display = 'none';
+  const maxAmt = rows[0][1];
+
+  rows.forEach(([cat, amt]) => {
+    const budget = budgets[cat];
+    const pct = budget ? Math.min(amt/budget, 1) : amt/maxAmt;
+    const cls = budget ? (pct >= 1 ? 'red' : pct >= 0.8 ? 'yellow' : 'green') : 'blue';
     const budgetStr = budget ? ` / ${fmt(budget)}` : '';
+    const pctStr = budget ? ` ${(amt/budget*100).toFixed(0)}%` : '';
     const row = document.createElement('div');
     row.className = 'budget-row';
     row.innerHTML = `
       <div class="budget-label">${titleCase(cat)}</div>
-      <div class="budget-bar-wrap">
-        <div class="budget-bar ${cls}" style="width:${budget ? pct*100 : 0}%"></div>
-      </div>
-      <div class="budget-nums"><strong>${fmt(spent)}</strong>${budgetStr} <span style="color:var(--muted)">${pctStr}</span></div>`;
+      <div class="budget-bar-wrap"><div class="budget-bar ${cls}" style="width:${Math.max(pct*100,2)}%"></div></div>
+      <div class="budget-nums"><strong>${fmt(amt)}</strong>${budgetStr}<span style="color:var(--muted)">${pctStr}</span></div>`;
     body.appendChild(row);
   });
-
-  if (!rows.length) {
-    document.getElementById('budget-empty').style.display = 'block';
-  }
 }
 
-function renderAccounts(balances) {
-  const tbody = document.getElementById('accounts-body');
-  tbody.innerHTML = '';
-  let hasRows = false;
+let _filteredTxns = [];
+function renderTransactions() {
+  const d = _data;
+  const allTxns = d.transactions || [];
 
-  Object.entries(balances).forEach(([inst, accounts]) => {
-    accounts.forEach(acct => {
-      if (acct.error) return;
-      hasRows = true;
-      const tr = document.createElement('tr');
-      const isCreditNeg = acct.type === 'credit';
-      const balDisplay = isCreditNeg ? `-${fmt(acct.current)}` : fmt(acct.current);
-      const balColor = isCreditNeg ? 'color:var(--red)' : acct.current > 0 ? 'color:var(--green)' : '';
-      const availCell = acct.available != null ? fmt(acct.available) : '—';
-      tr.innerHTML = `
-        <td style="font-weight:500">${inst.replace(/_/g,' ')}</td>
-        <td>${acct.name}</td>
-        <td><span class="acct-badge ${acct.type}">${acct.subtype || acct.type}</span></td>
-        <td style="text-align:right;font-family:var(--font-num);font-weight:600;${balColor}">${balDisplay}</td>
-        <td style="text-align:right;color:var(--text2);font-family:var(--font-num)">${availCell}</td>`;
-      tbody.appendChild(tr);
-    });
-  });
+  _filteredTxns = _selectedInst === '__all__'
+    ? allTxns
+    : allTxns.filter(t => t.institution === _selectedInst);
 
-  document.getElementById('accounts-empty').style.display = hasRows ? 'none' : 'block';
+  const label = _selectedInst === '__all__' ? 'All Transactions' : `${instLabel(_selectedInst)} Transactions`;
+  document.getElementById('txn-title').textContent = `${label} (${_filteredTxns.length})`;
+  document.getElementById('txn-search').value = '';
+  _renderTxnRows(_filteredTxns);
 }
 
-function renderTransactions(txns) {
+function filterTxns() {
+  const q = document.getElementById('txn-search').value.toLowerCase();
+  const rows = q ? _filteredTxns.filter(t =>
+    t.name.toLowerCase().includes(q) ||
+    t.category.toLowerCase().includes(q) ||
+    t.institution.toLowerCase().includes(q)
+  ) : _filteredTxns;
+  _renderTxnRows(rows);
+}
+
+function _renderTxnRows(txns) {
   const tbody = document.getElementById('txn-body');
   tbody.innerHTML = '';
+  document.getElementById('txn-empty').style.display = txns.length ? 'none' : 'block';
   txns.forEach(t => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="color:var(--muted);font-size:11px;white-space:nowrap">${t.date}</td>
-      <td style="font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</td>
-      <td style="color:var(--text2);font-size:11px">${titleCase(t.category)}</td>
-      <td style="color:var(--muted);font-size:11px">${t.institution.replace(/_/g,' ')}</td>
+      <td><div class="txn-name" title="${t.name}">${t.name}</div></td>
+      <td><span class="cat-pill">${titleCase(t.category)}</span></td>
+      <td style="color:var(--muted);font-size:11px">${instLabel(t.institution)}</td>
       <td style="text-align:right;font-family:var(--font-num);font-weight:600">${fmt(t.amount)}</td>`;
     tbody.appendChild(tr);
   });
-  document.getElementById('txn-empty').style.display = txns.length ? 'none' : 'block';
 }
 
 loadFinance();
-setInterval(loadFinance, 300000); // refresh every 5 min
+setInterval(loadFinance, 300000);
 </script>
 {% endblock %}
