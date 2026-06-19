@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% set active = "finance" %}
+{% block title %}Finance — Alfred{% endblock %}
+
+{% block extra_style %}
+.stat-row { display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
+.stat-card { flex:1; min-width:160px; }
+
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+@media(max-width:900px) { .two-col { grid-template-columns:1fr; } }
+
+.budget-row {
+  display:flex; align-items:center; gap:10px;
+  padding:9px 16px; border-bottom:1px solid var(--border);
+}
+.budget-row:last-child { border-bottom:none; }
+.budget-label { flex:0 0 180px; font-size:12px; font-weight:500; }
+.budget-bar-wrap { flex:1; background:var(--surface2); border-radius:999px; height:6px; overflow:hidden; }
+.budget-bar { height:100%; border-radius:999px; transition:width .4s; }
+.budget-bar.green  { background:var(--green); }
+.budget-bar.yellow { background:var(--yellow); }
+.budget-bar.red    { background:var(--red); }
+.budget-nums { flex:0 0 140px; text-align:right; font-family:var(--font-num); font-size:11px; color:var(--text2); }
+.budget-nums strong { color:var(--text); }
+
+.acct-badge {
+  display:inline-flex; align-items:center;
+  padding:1px 7px; border-radius:9999px;
+  font-size:10px; font-weight:600;
+}
+.acct-badge.credit { background:var(--red-bg);    color:var(--red); }
+.acct-badge.depository { background:var(--blue-bg); color:var(--blue); }
+.acct-badge.investment { background:rgba(124,131,245,.12); color:var(--accent); }
+.acct-badge.brokerage  { background:rgba(124,131,245,.12); color:var(--accent); }
+
+.refresh-btn {
+  background:var(--surface2); border:1px solid var(--border);
+  color:var(--text2); padding:4px 12px; border-radius:var(--radius-sm);
+  cursor:pointer; font-size:11px; font-weight:600; font-family:var(--font-ui);
+  transition:background .12s;
+}
+.refresh-btn:hover { background:var(--surface3); color:var(--text); }
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>💳 Finance</h1>
+  <span class="subtitle" id="finance-subtitle">Loading…</span>
+</div>
+
+<!-- Summary stat cards -->
+<div class="stat-row" id="stat-row">
+  <div class="stat-card"><div class="label">Net Worth</div><div class="value" id="s-net">—</div></div>
+  <div class="stat-card"><div class="label">Total Assets</div><div class="value green" id="s-assets">—</div></div>
+  <div class="stat-card"><div class="label">Total Debt</div><div class="value red" id="s-debt">—</div></div>
+  <div class="stat-card"><div class="label">Month Spend</div><div class="value" id="s-spend">—</div></div>
+</div>
+
+<div class="two-col">
+
+  <!-- Budget progress -->
+  <div>
+    <div class="card">
+      <div class="card-header"><h3>Budget — This Month</h3></div>
+      <div id="budget-body"></div>
+      <div class="empty" id="budget-empty" style="display:none">No spending data.</div>
+    </div>
+
+    <!-- Accounts -->
+    <div class="card">
+      <div class="card-header"><h3>Accounts</h3></div>
+      <table>
+        <thead><tr><th>Institution</th><th>Account</th><th>Type</th><th style="text-align:right">Balance</th><th style="text-align:right">Available</th></tr></thead>
+        <tbody id="accounts-body"></tbody>
+      </table>
+      <div class="empty" id="accounts-empty" style="display:none">No account data.</div>
+    </div>
+  </div>
+
+  <!-- Top transactions -->
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <h3>Top Transactions — This Month</h3>
+      </div>
+      <table>
+        <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody id="txn-body"></tbody>
+      </table>
+      <div class="empty" id="txn-empty" style="display:none">No transactions yet.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let _data = null;
+
+function fmt(n) {
+  if (n == null) return '—';
+  return '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+}
+
+function titleCase(s) {
+  return s.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+}
+
+async function loadFinance() {
+  const res = await fetch('/api/lifestyle/finance');
+  _data = await res.json();
+  if (_data.error) {
+    document.getElementById('finance-subtitle').textContent = _data.error;
+    return;
+  }
+  render(_data);
+}
+
+function render(d) {
+  const s = d.summary || {};
+  const updated = d.updated_at ? d.updated_at.slice(0,16).replace('T',' ') : '';
+  document.getElementById('finance-subtitle').textContent = updated ? `Last updated ${updated}` : '';
+
+  document.getElementById('s-net').textContent    = fmt(s.net_worth);
+  document.getElementById('s-assets').textContent = fmt(s.total_assets);
+  document.getElementById('s-debt').textContent   = fmt(s.total_debt);
+  document.getElementById('s-spend').textContent  = fmt(s.total_discretionary);
+
+  const netEl = document.getElementById('s-net');
+  netEl.className = 'value ' + (s.net_worth >= 0 ? 'green' : 'red');
+
+  renderBudgets(d.spending || {}, d.budgets || {});
+  renderAccounts(d.balances || {});
+  renderTransactions(d.transactions || []);
+}
+
+function renderBudgets(spending, budgets) {
+  const SKIP = new Set(['TRANSFER_IN','TRANSFER_OUT','LOAN_PAYMENTS','BANK_FEES']);
+  const body = document.getElementById('budget-body');
+  body.innerHTML = '';
+
+  // Show budgeted categories first, then any unbudgeted spending
+  const allCats = new Set([...Object.keys(budgets), ...Object.keys(spending).filter(k=>!SKIP.has(k))]);
+  const rows = [...allCats].map(cat => ({
+    cat,
+    spent: spending[cat] || 0,
+    budget: budgets[cat] || null,
+  })).sort((a,b) => {
+    // budgeted first, then by % spent desc
+    const aHas = a.budget != null, bHas = b.budget != null;
+    if (aHas !== bHas) return aHas ? -1 : 1;
+    const aPct = a.budget ? a.spent/a.budget : 0;
+    const bPct = b.budget ? b.spent/b.budget : 0;
+    return bPct - aPct;
+  });
+
+  rows.forEach(({cat, spent, budget}) => {
+    const pct = budget ? Math.min(spent/budget, 1) : 0;
+    const cls = pct >= 1 ? 'red' : pct >= 0.8 ? 'yellow' : 'green';
+    const pctStr = budget ? (pct*100).toFixed(0)+'%' : '';
+    const budgetStr = budget ? ` / ${fmt(budget)}` : '';
+    const row = document.createElement('div');
+    row.className = 'budget-row';
+    row.innerHTML = `
+      <div class="budget-label">${titleCase(cat)}</div>
+      <div class="budget-bar-wrap">
+        <div class="budget-bar ${cls}" style="width:${budget ? pct*100 : 0}%"></div>
+      </div>
+      <div class="budget-nums"><strong>${fmt(spent)}</strong>${budgetStr} <span style="color:var(--muted)">${pctStr}</span></div>`;
+    body.appendChild(row);
+  });
+
+  if (!rows.length) {
+    document.getElementById('budget-empty').style.display = 'block';
+  }
+}
+
+function renderAccounts(balances) {
+  const tbody = document.getElementById('accounts-body');
+  tbody.innerHTML = '';
+  let hasRows = false;
+
+  Object.entries(balances).forEach(([inst, accounts]) => {
+    accounts.forEach(acct => {
+      if (acct.error) return;
+      hasRows = true;
+      const tr = document.createElement('tr');
+      const isCreditNeg = acct.type === 'credit';
+      const balDisplay = isCreditNeg ? `-${fmt(acct.current)}` : fmt(acct.current);
+      const balColor = isCreditNeg ? 'color:var(--red)' : acct.current > 0 ? 'color:var(--green)' : '';
+      const availCell = acct.available != null ? fmt(acct.available) : '—';
+      tr.innerHTML = `
+        <td style="font-weight:500">${inst.replace(/_/g,' ')}</td>
+        <td>${acct.name}</td>
+        <td><span class="acct-badge ${acct.type}">${acct.subtype || acct.type}</span></td>
+        <td style="text-align:right;font-family:var(--font-num);font-weight:600;${balColor}">${balDisplay}</td>
+        <td style="text-align:right;color:var(--text2);font-family:var(--font-num)">${availCell}</td>`;
+      tbody.appendChild(tr);
+    });
+  });
+
+  document.getElementById('accounts-empty').style.display = hasRows ? 'none' : 'block';
+}
+
+function renderTransactions(txns) {
+  const tbody = document.getElementById('txn-body');
+  tbody.innerHTML = '';
+  txns.forEach(t => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${t.date}</td>
+      <td style="font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</td>
+      <td style="color:var(--text2);font-size:11px">${titleCase(t.category)}</td>
+      <td style="color:var(--muted);font-size:11px">${t.institution.replace(/_/g,' ')}</td>
+      <td style="text-align:right;font-family:var(--font-num);font-weight:600">${fmt(t.amount)}</td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('txn-empty').style.display = txns.length ? 'none' : 'block';
+}
+
+loadFinance();
+setInterval(loadFinance, 300000); // refresh every 5 min
+</script>
+{% endblock %}

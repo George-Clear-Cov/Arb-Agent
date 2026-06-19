@@ -23,9 +23,10 @@ from typing import Optional
 
 # Lifestyle-agent data files — resolved relative to this file so the path
 # works on both dev (macOS, /Users/…) and prod (Ubuntu, /home/ubuntu/…).
-_LIFESTYLE_ROOT = Path(__file__).parent.parent.parent.parent / "lifestyle-agent"
-_JOBS_FILE    = _LIFESTYLE_ROOT / "jobs" / "jobs_db.json"
-_FLIGHTS_FILE = _LIFESTYLE_ROOT / "flights" / "price_history.json"
+_LIFESTYLE_ROOT  = Path(__file__).parent.parent.parent.parent / "lifestyle-agent"
+_JOBS_FILE       = _LIFESTYLE_ROOT / "jobs" / "jobs_db.json"
+_FLIGHTS_FILE    = _LIFESTYLE_ROOT / "flights" / "price_history.json"
+_FINANCE_FILE    = _LIFESTYLE_ROOT / "finance" / "finance_snapshot.json"
 
 _AIRPORT_LABELS = {
     "MIA":("Miami","Miami"), "FLL":("Fort Lauderdale","Miami"),
@@ -236,6 +237,14 @@ async def flights_dashboard(request: Request):
     })
 
 
+@app.get("/finance", response_class=HTMLResponse)
+async def finance_dashboard(request: Request):
+    return templates.TemplateResponse("finance.html", {
+        "request": request,
+        "last_updated": _state["last_updated"],
+    })
+
+
 # ── API ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -388,7 +397,18 @@ async def api_flights():
     return JSONResponse(_load_flights())
 
 
+@app.get("/api/lifestyle/finance")
+async def api_finance():
+    return JSONResponse(_load_finance())
+
+
 # ── Lifestyle helpers ──────────────────────────────────────────────────────
+
+def _load_finance() -> dict:
+    if not _FINANCE_FILE.exists():
+        return {"error": "No snapshot yet. Run: python3 monitor.py --report"}
+    return json.loads(_FINANCE_FILE.read_text())
+
 
 def _load_jobs() -> list:
     if not _JOBS_FILE.exists():
