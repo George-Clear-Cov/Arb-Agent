@@ -116,7 +116,11 @@
 <div class="stat-row">
   <div class="stat-card"><div class="label">Net Worth</div><div class="value" id="s-net">—</div></div>
   <div class="stat-card"><div class="label">Cash &amp; Investments</div><div class="value green" id="s-assets">—</div></div>
-  <div class="stat-card"><div class="label">Cards (paid monthly)</div><div class="value" id="s-cards" style="color:var(--text2)">—</div></div>
+  <div class="stat-card">
+    <div class="label">Statement Due</div>
+    <div class="value" id="s-statement" style="color:var(--text2)">—</div>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px"><span id="s-cycle">—</span> accruing this cycle</div>
+  </div>
   <div class="stat-card"><div class="label">Month Spend</div><div class="value" id="s-spend">—</div></div>
 </div>
 
@@ -251,9 +255,10 @@ function renderAll() {
   const d = _data, s = d.summary || {};
   const updated = d.updated_at ? d.updated_at.slice(0,16).replace('T',' ') : '';
   document.getElementById('finance-subtitle').textContent = updated ? `Last updated ${updated}` : '';
-  document.getElementById('s-assets').textContent = fmt(s.total_assets);
-  document.getElementById('s-cards').textContent  = fmt(s.total_cards);
-  document.getElementById('s-spend').textContent  = fmt(s.total_discretionary);
+  document.getElementById('s-assets').textContent    = fmt(s.total_assets);
+  document.getElementById('s-statement').textContent = fmt(s.total_statement);
+  document.getElementById('s-cycle').textContent     = fmt(s.total_cycle);
+  document.getElementById('s-spend').textContent     = fmt(s.total_discretionary);
   const netEl = document.getElementById('s-net');
   netEl.textContent = fmt(s.net_worth);
   netEl.className   = 'value ' + (s.net_worth >= 0 ? 'green' : 'red');
@@ -314,30 +319,38 @@ function renderAccountCards() {
 
   Object.entries(d.balances||{}).forEach(([inst,accounts])=>{
     if(!accounts||accounts[0]?.error) return;
-    let bal=0, sub='', isPaidMonthly=false;
+    let bal=0, sub='', isPaidMonthly=false, statement=0, cycle=0, lastPmt='';
     accounts.forEach(a=>{
       const c=a.current||0;
-      if(a.type==='credit'){ isPaidMonthly=true; }  // don't subtract cards from balance shown
-      else if(a.type==='loan'){ bal-=c; }            // loans are real debt
+      if(a.type==='credit'){
+        isPaidMonthly=true;
+        statement += a.statement_balance||0;
+        cycle     += a.cycle_charges||0;
+        if(!lastPmt && a.last_payment_date) lastPmt=a.last_payment_date;
+      } else if(a.type==='loan'){ bal-=c; }
       else { bal+=c; }
       if(!sub&&a.subtype) sub=a.subtype;
     });
-    const spend = Object.values(d.spending_by_institution?.[inst]||{}).reduce((s,v)=>s+v,0);
-    container.appendChild(_makeCard(inst, instLabel(inst), bal, spend, sub, isPaidMonthly));
+    container.appendChild(_makeCard(inst, instLabel(inst), bal, sub, isPaidMonthly, statement, cycle, lastPmt));
   });
 }
 
-function _makeCard(key, label, balance, spend, subtype, isPaidMonthly) {
+function _makeCard(key, label, balance, subtype, isPaidMonthly, statement, cycle, lastPmt) {
   const card = document.createElement('div');
   card.className = 'acct-card' + (_selectedInst===key?' active':'');
-  const balColor = balance < 0 ? 'red' : 'green';
-  const balLabel = isPaidMonthly
-    ? `<div class="ac-bal" style="color:var(--text2)">${fmt(spend)} this cycle</div><div class="ac-sub">paid in full monthly</div>`
-    : `<div class="ac-bal ${balColor}">${balance<0?'-':''}${fmt(Math.abs(balance))}</div>${subtype?`<div class="ac-sub">${titleCase(subtype)}</div>`:''}`;
-  card.innerHTML = `
-    <div class="ac-name">${label}</div>
-    ${balLabel}
-    ${(!isPaidMonthly && spend>0)?`<div class="ac-spend"><strong>${fmt(spend)}</strong> this month</div>`:''}`;
+  let inner = '';
+  if(isPaidMonthly) {
+    const pmtLabel = lastPmt ? `paid ${lastPmt}` : 'paid monthly';
+    inner = `
+      <div class="ac-bal" style="color:var(--text2);font-size:15px">${fmt(statement)} <span style="font-size:11px;color:var(--muted)">due</span></div>
+      <div class="ac-sub">${fmt(cycle)} accruing · ${pmtLabel}</div>`;
+  } else {
+    const balColor = balance < 0 ? 'red' : 'green';
+    inner = `
+      <div class="ac-bal ${balColor}">${balance<0?'-':''}${fmt(Math.abs(balance))}</div>
+      ${subtype?`<div class="ac-sub">${titleCase(subtype)}</div>`:''}`;
+  }
+  card.innerHTML = `<div class="ac-name">${label}</div>${inner}`;
   card.addEventListener('click',()=>_selectInst(key));
   return card;
 }
