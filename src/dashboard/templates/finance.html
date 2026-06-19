@@ -273,8 +273,10 @@ function renderHealth() {
   const rate    = s.savings_rate_pct || 0;
 
   document.getElementById('hm-income').textContent = fmt(income);
-  document.getElementById('hm-income-sub').textContent =
-    (d.income_transactions||[]).map(t=>t.name).filter((v,i,a)=>a.indexOf(v)===i).join(', ');
+  const freq = s.pay_frequency || '';
+  const freqLabel = {'biweekly':'biweekly × 26/12','weekly':'weekly × 52/12','semi-monthly':'semi-monthly × 2','monthly':'monthly'}[freq] || freq;
+  const incomeNames = (d.income_transactions||[]).map(t=>t.name).filter((v,i,a)=>a.indexOf(v)===i).join(', ');
+  document.getElementById('hm-income-sub').textContent = incomeNames + (freqLabel ? ` · ${freqLabel}` : '');
   document.getElementById('hm-spend').textContent  = fmt(spend);
   document.getElementById('hm-spend-pct').textContent = income ? `${(spend/income*100).toFixed(0)}% of income` : '';
 
@@ -368,6 +370,27 @@ function renderBreakdown() {
   const rows = Object.entries(spending).filter(([c])=>!SKIP.has(c)).sort(([,a],[,b])=>b-a);
   document.getElementById('breakdown-empty').style.display = rows.length?'none':'block';
   const maxAmt = rows[0]?.[1]||1;
+
+  // Fixed expenses shown first with a "fixed" pill
+  const fixedExp = (_selectedInst === '__all__') ? (_data.fixed_expenses || []) : [];
+  fixedExp.forEach(fe => {
+    const cat = fe.category, amt = fe.amount;
+    const pct = amt / maxAmt;
+    const row = document.createElement('div');
+    row.className = 'budget-row' + (_selectedCat===cat?' selected':'');
+    row.dataset.cat = cat;
+    row.innerHTML = `
+      <div class="budget-label">${fe.name} <span style="font-size:9px;background:var(--surface3);padding:1px 5px;border-radius:9999px;color:var(--muted);font-weight:600">FIXED</span></div>
+      <div class="budget-bar-wrap"><div class="budget-bar blue" style="width:${Math.max(pct*100,2)}%"></div></div>
+      <div class="budget-nums"><strong>${fmt(amt)}</strong><span style="color:var(--muted)"> /mo</span></div>`;
+    row.addEventListener('click', () => {
+      _selectedCat = _selectedCat===cat?'':cat;
+      document.getElementById('filter-cat').value = _selectedCat;
+      document.querySelectorAll('.budget-row').forEach(r=>r.classList.toggle('selected',r.dataset.cat===_selectedCat&&_selectedCat!==''));
+      _applyFilters();
+    });
+    body.appendChild(row);
+  });
 
   rows.forEach(([cat,amt])=>{
     const budget=budgets[cat], pct=budget?Math.min(amt/budget,1):amt/maxAmt;
