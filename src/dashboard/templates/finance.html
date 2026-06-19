@@ -8,57 +8,75 @@
 .stat-card { flex:1; min-width:150px; }
 
 /* ── Account selector cards ── */
-.acct-cards {
-  display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;
-}
+.acct-cards { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
 .acct-card {
   background:var(--surface); border:2px solid var(--border);
   border-radius:var(--radius); padding:12px 16px;
   cursor:pointer; transition:border-color .12s, box-shadow .12s;
-  min-width:160px; flex:1;
+  min-width:150px; flex:1;
 }
 .acct-card:hover { border-color:var(--border2); box-shadow:0 2px 8px rgba(0,0,0,.06); }
 .acct-card.active { border-color:var(--accent); box-shadow:0 0 0 3px rgba(91,99,232,.12); }
 .acct-card .ac-name { font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
 .acct-card .ac-bal  { font-family:var(--font-num); font-size:18px; font-weight:700; }
-.acct-card .ac-bal.red    { color:var(--red); }
-.acct-card .ac-bal.green  { color:var(--green); }
+.acct-card .ac-bal.red   { color:var(--red); }
+.acct-card .ac-bal.green { color:var(--green); }
 .acct-card .ac-sub  { font-size:10px; color:var(--muted); margin-top:2px; }
-.acct-card .ac-spend{ font-size:11px; color:var(--text2); margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
+.acct-card .ac-spend { font-size:11px; color:var(--text2); margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
 .acct-card .ac-spend strong { color:var(--text); }
 
 /* ── Two-column layout ── */
-.two-col { display:grid; grid-template-columns:340px 1fr; gap:16px; }
+.two-col { display:grid; grid-template-columns:320px 1fr; gap:16px; }
 @media(max-width:960px) { .two-col { grid-template-columns:1fr; } }
 
 /* ── Spending breakdown ── */
 .budget-row {
   display:flex; align-items:center; gap:10px;
-  padding:9px 16px; border-bottom:1px solid var(--border);
+  padding:9px 16px; border-bottom:1px solid var(--border); cursor:pointer;
+  transition:background .08s;
 }
 .budget-row:last-child { border-bottom:none; }
-.budget-label { flex:0 0 160px; font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.budget-row:hover { background:rgba(0,0,0,.02); }
+.budget-row.selected { background:rgba(91,99,232,.06); }
+.budget-label { flex:0 0 150px; font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .budget-bar-wrap { flex:1; background:var(--surface2); border-radius:999px; height:6px; overflow:hidden; }
 .budget-bar { height:100%; border-radius:999px; transition:width .3s; }
 .budget-bar.green  { background:var(--green); }
 .budget-bar.yellow { background:var(--yellow); }
 .budget-bar.red    { background:var(--red); }
 .budget-bar.blue   { background:var(--blue); }
-.budget-nums { flex:0 0 110px; text-align:right; font-family:var(--font-num); font-size:11px; color:var(--text2); }
+.budget-nums { flex:0 0 100px; text-align:right; font-family:var(--font-num); font-size:11px; color:var(--text2); }
 .budget-nums strong { color:var(--text); }
+
+/* ── Filter / sort bar ── */
+.filter-bar {
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  padding:8px 12px; background:var(--surface2); border-bottom:1px solid var(--border);
+}
+.filter-bar select, .filter-bar input {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:4px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:var(--font-ui);
+}
+.filter-bar select:focus, .filter-bar input:focus { outline:none; border-color:var(--accent); }
+.filter-bar input { width:180px; }
+.sort-btn {
+  background:var(--surface); border:1px solid var(--border); color:var(--text2);
+  padding:4px 10px; border-radius:var(--radius-sm); font-size:11px; font-weight:600;
+  cursor:pointer; font-family:var(--font-ui); white-space:nowrap; transition:background .1s;
+}
+.sort-btn:hover { background:var(--surface3); color:var(--text); }
+.sort-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.filter-count { margin-left:auto; font-size:11px; color:var(--muted); white-space:nowrap; }
 
 /* ── Transaction table ── */
 .txn-name { font-weight:500; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cat-pill {
   display:inline-block; padding:1px 7px; border-radius:9999px;
   font-size:10px; font-weight:600; background:var(--surface2); color:var(--text2);
+  cursor:pointer; transition:background .1s;
 }
-.search-bar {
-  background:var(--surface); border:1px solid var(--border); color:var(--text);
-  padding:5px 10px; border-radius:var(--radius); font-size:12px; width:220px;
-  font-family:var(--font-ui);
-}
-.search-bar:focus { outline:none; border-color:var(--accent); }
+.cat-pill:hover { background:var(--surface3); }
+.cat-pill.active-filter { background:var(--accent); color:#fff; }
 {% endblock %}
 
 {% block content %}
@@ -67,7 +85,7 @@
   <span class="subtitle" id="finance-subtitle">Loading…</span>
 </div>
 
-<!-- Summary stat cards -->
+<!-- Summary -->
 <div class="stat-row">
   <div class="stat-card"><div class="label">Net Worth</div><div class="value" id="s-net">—</div></div>
   <div class="stat-card"><div class="label">Total Assets</div><div class="value green" id="s-assets">—</div></div>
@@ -75,32 +93,39 @@
   <div class="stat-card"><div class="label">Month Spend</div><div class="value" id="s-spend">—</div></div>
 </div>
 
-<!-- Account selector -->
+<!-- Account cards -->
 <div class="acct-cards" id="acct-cards"></div>
 
-<!-- Detail view -->
+<!-- Detail -->
 <div class="two-col">
   <div>
     <div class="card">
       <div class="card-header"><h3 id="breakdown-title">Spending Breakdown</h3></div>
       <div id="breakdown-body"></div>
-      <div class="empty" id="breakdown-empty" style="display:none">No spending data for this account.</div>
+      <div class="empty" id="breakdown-empty" style="display:none">No spending data.</div>
     </div>
   </div>
 
   <div>
     <div class="card">
-      <div class="card-header">
-        <h3 id="txn-title">Transactions</h3>
-        <input class="search-bar" id="txn-search" placeholder="Search…" oninput="filterTxns()">
+      <div class="card-header" style="flex-direction:column;align-items:flex-start;gap:0;padding:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:10px 16px;border-bottom:1px solid var(--border);">
+          <h3 id="txn-title">Transactions</h3>
+        </div>
+        <div class="filter-bar">
+          <input id="txn-search" placeholder="Search merchant…" oninput="_applyFilters()">
+          <select id="filter-cat" onchange="_applyFilters()">
+            <option value="">All categories</option>
+          </select>
+          <button class="sort-btn active" id="sort-date" onclick="_setSort('date')">Date ↓</button>
+          <button class="sort-btn" id="sort-amt"  onclick="_setSort('amount')">Amount ↓</button>
+          <span class="filter-count" id="filter-count"></span>
+        </div>
       </div>
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Merchant</th>
-            <th>Category</th>
-            <th>Account</th>
+            <th>Date</th><th>Merchant</th><th>Category</th><th>Account</th>
             <th style="text-align:right">Amount</th>
           </tr>
         </thead>
@@ -114,176 +139,186 @@
 <script>
 let _data = null;
 let _selectedInst = '__all__';
+let _selectedCat  = '';
+let _sortKey      = 'date';   // 'date' | 'amount'
+let _sortAsc      = false;    // default desc for both
+let _instTxns     = [];       // transactions for current institution
 
 function fmt(n) {
   if (n == null) return '—';
   return '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
 }
 function titleCase(s) {
-  return (s||'').replace(/_/g,' ').toLowerCase().replace(/\b\w/g, c=>c.toUpperCase());
+  return (s||'').replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
 }
 function instLabel(k) {
-  return k.replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
+  return k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 }
 
 async function loadFinance() {
   const res = await fetch('/api/lifestyle/finance');
   _data = await res.json();
-  if (_data.error) {
-    document.getElementById('finance-subtitle').textContent = _data.error;
-    return;
-  }
+  if (_data.error) { document.getElementById('finance-subtitle').textContent = _data.error; return; }
   renderAll();
 }
 
 function renderAll() {
-  const d = _data;
-  const s = d.summary || {};
+  const d = _data, s = d.summary || {};
   const updated = d.updated_at ? d.updated_at.slice(0,16).replace('T',' ') : '';
   document.getElementById('finance-subtitle').textContent = updated ? `Last updated ${updated}` : '';
-
-  // Summary stats
   document.getElementById('s-assets').textContent = fmt(s.total_assets);
   document.getElementById('s-debt').textContent   = fmt(s.total_debt);
   document.getElementById('s-spend').textContent  = fmt(s.total_discretionary);
   const netEl = document.getElementById('s-net');
   netEl.textContent = fmt(s.net_worth);
   netEl.className   = 'value ' + (s.net_worth >= 0 ? 'green' : 'red');
-
   renderAccountCards();
-  renderBreakdown();
-  renderTransactions();
+  _selectInst(_selectedInst, false);
 }
 
 function renderAccountCards() {
-  const d = _data;
-  const container = document.getElementById('acct-cards');
+  const d = _data, container = document.getElementById('acct-cards');
   container.innerHTML = '';
-
-  // "All" card
-  const allSpend = Object.values(d.spending_by_institution || {}).reduce((sum, cats) => {
-    return sum + Object.values(cats).reduce((s, v) => s + v, 0);
-  }, 0);
-  container.appendChild(_makeCard('__all__', 'All Accounts', d.summary.total_assets - d.summary.total_debt, allSpend, null, true));
-
-  // Per-institution cards
-  const balances = d.balances || {};
-  Object.entries(balances).forEach(([inst, accounts]) => {
-    if (!accounts || accounts[0]?.error) return;
-    // Total balance for this institution
-    let totalBal = 0, isDebt = false, subtype = '';
-    accounts.forEach(acct => {
-      const cur = acct.current || 0;
-      if (acct.type === 'credit') { totalBal -= cur; isDebt = true; }
-      else totalBal += cur;
-      if (!subtype && acct.subtype) subtype = acct.subtype;
-    });
-    // Spend for this institution
-    const instSpend = Object.values(d.spending_by_institution?.[inst] || {}).reduce((s,v)=>s+v, 0);
-    container.appendChild(_makeCard(inst, instLabel(inst), totalBal, instSpend, subtype));
+  const allSpend = Object.values(d.spending_by_institution||{})
+    .reduce((sum,cats)=>sum+Object.values(cats).reduce((s,v)=>s+v,0),0);
+  container.appendChild(_makeCard('__all__', 'All Accounts', d.summary.total_assets-d.summary.total_debt, allSpend, null));
+  Object.entries(d.balances||{}).forEach(([inst,accounts])=>{
+    if(!accounts||accounts[0]?.error) return;
+    let bal=0, isDebt=false, sub='';
+    accounts.forEach(a=>{ const c=a.current||0; if(a.type==='credit'){bal-=c;isDebt=true;}else bal+=c; if(!sub&&a.subtype)sub=a.subtype; });
+    const spend = Object.values(d.spending_by_institution?.[inst]||{}).reduce((s,v)=>s+v,0);
+    container.appendChild(_makeCard(inst, instLabel(inst), bal, spend, sub));
   });
 }
 
-function _makeCard(key, label, balance, spend, subtype, isAll) {
+function _makeCard(key, label, balance, spend, subtype) {
   const card = document.createElement('div');
-  card.className = 'acct-card' + (_selectedInst === key ? ' active' : '');
-  const balColor = balance < 0 ? 'red' : 'green';
-  const balPrefix = balance < 0 ? '-' : '';
+  card.className = 'acct-card' + (_selectedInst===key?' active':'');
+  const balColor = balance<0?'red':'green';
   card.innerHTML = `
     <div class="ac-name">${label}</div>
-    <div class="ac-bal ${balColor}">${balPrefix}${fmt(Math.abs(balance))}</div>
-    ${subtype ? `<div class="ac-sub">${titleCase(subtype)}</div>` : ''}
-    ${spend > 0 ? `<div class="ac-spend"><strong>${fmt(spend)}</strong> spent this month</div>` : ''}`;
-  card.addEventListener('click', () => {
-    _selectedInst = key;
-    document.querySelectorAll('.acct-card').forEach(c => c.classList.remove('active'));
-    card.classList.add('active');
-    renderBreakdown();
-    renderTransactions();
-  });
+    <div class="ac-bal ${balColor}">${balance<0?'-':''}${fmt(Math.abs(balance))}</div>
+    ${subtype?`<div class="ac-sub">${titleCase(subtype)}</div>`:''}
+    ${spend>0?`<div class="ac-spend"><strong>${fmt(spend)}</strong> this month</div>`:''}`;
+  card.addEventListener('click',()=>_selectInst(key));
   return card;
 }
 
-function renderBreakdown() {
-  const d = _data;
-  const body = document.getElementById('breakdown-body');
-  const emptyEl = document.getElementById('breakdown-empty');
-  body.innerHTML = '';
-
-  let spending = {};
-  if (_selectedInst === '__all__') {
-    spending = d.spending || {};
-    document.getElementById('breakdown-title').textContent = 'Spending Breakdown — All';
-  } else {
-    spending = d.spending_by_institution?.[_selectedInst] || {};
-    document.getElementById('breakdown-title').textContent = `Spending — ${instLabel(_selectedInst)}`;
+function _selectInst(key, updateCards=true) {
+  _selectedInst = key;
+  _selectedCat  = '';
+  if(updateCards){
+    document.querySelectorAll('.acct-card').forEach(c=>c.classList.remove('active'));
+    document.querySelectorAll('.acct-card').forEach(c=>{
+      if(c.querySelector('.ac-name')?.textContent === (key==='__all__'?'All Accounts':instLabel(key)))
+        c.classList.add('active');
+    });
   }
+  // Set institution transactions
+  const all = _data.transactions||[];
+  _instTxns = key==='__all__' ? all : all.filter(t=>t.institution===key);
 
-  const budgets = d.budgets || {};
+  // Rebuild category dropdown
+  const cats = [...new Set(_instTxns.map(t=>t.category))].sort();
+  const sel = document.getElementById('filter-cat');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All categories</option>';
+  cats.forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=titleCase(c); if(c===prev)o.selected=true; sel.appendChild(o); });
+  _selectedCat = cats.includes(prev)?prev:'';
+
+  renderBreakdown();
+  _applyFilters();
+}
+
+function renderBreakdown() {
+  const d = _data, body = document.getElementById('breakdown-body');
+  body.innerHTML = '';
+  let spending = _selectedInst==='__all__' ? (d.spending||{}) : (d.spending_by_institution?.[_selectedInst]||{});
+  document.getElementById('breakdown-title').textContent =
+    `Spending — ${_selectedInst==='__all__'?'All':instLabel(_selectedInst)}`;
+
   const SKIP = new Set(['TRANSFER_IN','TRANSFER_OUT','LOAN_PAYMENTS','BANK_FEES']);
-  const rows = Object.entries(spending)
-    .filter(([cat]) => !SKIP.has(cat))
-    .sort(([,a],[,b]) => b - a);
+  const budgets = d.budgets||{};
+  const rows = Object.entries(spending).filter(([c])=>!SKIP.has(c)).sort(([,a],[,b])=>b-a);
+  document.getElementById('breakdown-empty').style.display = rows.length?'none':'block';
+  const maxAmt = rows[0]?.[1]||1;
 
-  if (!rows.length) { emptyEl.style.display='block'; return; }
-  emptyEl.style.display = 'none';
-  const maxAmt = rows[0][1];
-
-  rows.forEach(([cat, amt]) => {
-    const budget = budgets[cat];
-    const pct = budget ? Math.min(amt/budget, 1) : amt/maxAmt;
-    const cls = budget ? (pct >= 1 ? 'red' : pct >= 0.8 ? 'yellow' : 'green') : 'blue';
-    const budgetStr = budget ? ` / ${fmt(budget)}` : '';
-    const pctStr = budget ? ` ${(amt/budget*100).toFixed(0)}%` : '';
+  rows.forEach(([cat,amt])=>{
+    const budget=budgets[cat], pct=budget?Math.min(amt/budget,1):amt/maxAmt;
+    const cls = budget?(pct>=1?'red':pct>=0.8?'yellow':'green'):'blue';
     const row = document.createElement('div');
-    row.className = 'budget-row';
+    row.className = 'budget-row' + (_selectedCat===cat?' selected':'');
+    row.dataset.cat = cat;
     row.innerHTML = `
       <div class="budget-label">${titleCase(cat)}</div>
       <div class="budget-bar-wrap"><div class="budget-bar ${cls}" style="width:${Math.max(pct*100,2)}%"></div></div>
-      <div class="budget-nums"><strong>${fmt(amt)}</strong>${budgetStr}<span style="color:var(--muted)">${pctStr}</span></div>`;
+      <div class="budget-nums"><strong>${fmt(amt)}</strong>${budget?` / ${fmt(budget)}`:''}
+        <span style="color:var(--muted)">${budget?` ${(amt/budget*100).toFixed(0)}%`:''}</span></div>`;
+    row.addEventListener('click',()=>{
+      const clicked = row.dataset.cat;
+      _selectedCat = _selectedCat===clicked?'':clicked;
+      document.getElementById('filter-cat').value = _selectedCat;
+      document.querySelectorAll('.budget-row').forEach(r=>r.classList.toggle('selected',r.dataset.cat===_selectedCat&&_selectedCat!==''));
+      _applyFilters();
+    });
     body.appendChild(row);
   });
 }
 
-let _filteredTxns = [];
-function renderTransactions() {
-  const d = _data;
-  const allTxns = d.transactions || [];
-
-  _filteredTxns = _selectedInst === '__all__'
-    ? allTxns
-    : allTxns.filter(t => t.institution === _selectedInst);
-
-  const label = _selectedInst === '__all__' ? 'All Transactions' : `${instLabel(_selectedInst)} Transactions`;
-  document.getElementById('txn-title').textContent = `${label} (${_filteredTxns.length})`;
-  document.getElementById('txn-search').value = '';
-  _renderTxnRows(_filteredTxns);
+function _setSort(key) {
+  if (_sortKey===key) { _sortAsc=!_sortAsc; }
+  else { _sortKey=key; _sortAsc=false; }
+  document.getElementById('sort-date').className='sort-btn'+(_sortKey==='date'?' active':'');
+  document.getElementById('sort-amt').className='sort-btn'+(_sortKey==='amount'?' active':'');
+  document.getElementById('sort-date').textContent='Date '+(_sortKey==='date'?(_sortAsc?'↑':'↓'):'↓');
+  document.getElementById('sort-amt').textContent='Amount '+(_sortKey==='amount'?(_sortAsc?'↑':'↓'):'↓');
+  _applyFilters();
 }
 
-function filterTxns() {
-  const q = document.getElementById('txn-search').value.toLowerCase();
-  const rows = q ? _filteredTxns.filter(t =>
-    t.name.toLowerCase().includes(q) ||
-    t.category.toLowerCase().includes(q) ||
-    t.institution.toLowerCase().includes(q)
-  ) : _filteredTxns;
-  _renderTxnRows(rows);
+function _applyFilters() {
+  const q   = document.getElementById('txn-search').value.toLowerCase();
+  const cat = document.getElementById('filter-cat').value;
+  _selectedCat = cat;
+
+  // Sync breakdown row highlights
+  document.querySelectorAll('.budget-row').forEach(r=>
+    r.classList.toggle('selected',r.dataset.cat===cat&&cat!==''));
+
+  let rows = _instTxns.slice();
+  if(q)   rows = rows.filter(t=>t.name.toLowerCase().includes(q)||t.institution.toLowerCase().includes(q));
+  if(cat) rows = rows.filter(t=>t.category===cat);
+
+  rows.sort((a,b)=>{
+    let av,bv;
+    if(_sortKey==='date')   { av=a.date; bv=b.date; return _sortAsc?av.localeCompare(bv):bv.localeCompare(av); }
+    if(_sortKey==='amount') { av=a.amount; bv=b.amount; return _sortAsc?av-bv:bv-av; }
+    return 0;
+  });
+
+  document.getElementById('filter-count').textContent = rows.length+' transactions';
+  _renderRows(rows);
 }
 
-function _renderTxnRows(txns) {
+function _renderRows(txns) {
   const tbody = document.getElementById('txn-body');
   tbody.innerHTML = '';
-  document.getElementById('txn-empty').style.display = txns.length ? 'none' : 'block';
-  txns.forEach(t => {
+  document.getElementById('txn-empty').style.display = txns.length?'none':'block';
+  txns.forEach(t=>{
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="color:var(--muted);font-size:11px;white-space:nowrap">${t.date}</td>
       <td><div class="txn-name" title="${t.name}">${t.name}</div></td>
-      <td><span class="cat-pill">${titleCase(t.category)}</span></td>
+      <td><span class="cat-pill${_selectedCat===t.category?' active-filter':''}" data-cat="${t.category}" onclick="_clickCat('${t.category}')">${titleCase(t.category)}</span></td>
       <td style="color:var(--muted);font-size:11px">${instLabel(t.institution)}</td>
       <td style="text-align:right;font-family:var(--font-num);font-weight:600">${fmt(t.amount)}</td>`;
     tbody.appendChild(tr);
   });
+}
+
+function _clickCat(cat) {
+  _selectedCat = _selectedCat===cat?'':cat;
+  document.getElementById('filter-cat').value = _selectedCat;
+  _applyFilters();
 }
 
 loadFinance();
