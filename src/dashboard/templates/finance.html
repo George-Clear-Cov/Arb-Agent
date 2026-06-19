@@ -25,6 +25,33 @@
 .acct-card .ac-spend { font-size:11px; color:var(--text2); margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
 .acct-card .ac-spend strong { color:var(--text); }
 
+/* ── Financial health card ── */
+.health-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:16px 20px; margin-bottom:20px;
+}
+.health-card h3 { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:var(--text2); margin-bottom:14px; }
+.health-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+.health-metric .hm-label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin-bottom:4px; }
+.health-metric .hm-val { font-family:var(--font-num); font-size:18px; font-weight:700; }
+.health-metric .hm-sub { font-size:10px; color:var(--text2); margin-top:2px; }
+.alloc-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
+.alloc-item {
+  background:var(--surface2); border-radius:var(--radius); padding:10px 12px;
+  border-left:3px solid var(--border2);
+}
+.alloc-item.savings  { border-color:var(--green); }
+.alloc-item.invest   { border-color:var(--accent); }
+.alloc-item.travel   { border-color:var(--blue); }
+.alloc-item.spend    { border-color:var(--yellow); }
+.alloc-item.needs    { border-color:var(--muted); }
+.alloc-item .al-label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin-bottom:4px; }
+.alloc-item .al-amt   { font-family:var(--font-num); font-size:15px; font-weight:700; }
+.alloc-item .al-sub   { font-size:10px; color:var(--text2); margin-top:2px; }
+.surplus-bar-wrap { height:8px; background:var(--surface2); border-radius:999px; overflow:hidden; margin-bottom:6px; }
+.surplus-bar { height:100%; border-radius:999px; background:var(--green); transition:width .4s; }
+.surplus-bar.overspent { background:var(--red); }
+
 /* ── Two-column layout ── */
 .two-col { display:grid; grid-template-columns:320px 1fr; gap:16px; }
 @media(max-width:960px) { .two-col { grid-template-columns:1fr; } }
@@ -95,6 +122,64 @@
 
 <!-- Account cards -->
 <div class="acct-cards" id="acct-cards"></div>
+
+<!-- Financial health -->
+<div class="health-card" id="health-card" style="display:none">
+  <h3>Financial Health</h3>
+  <div class="health-grid">
+    <div class="health-metric">
+      <div class="hm-label">Monthly Income</div>
+      <div class="hm-val green" id="hm-income">—</div>
+      <div class="hm-sub" id="hm-income-sub"></div>
+    </div>
+    <div class="health-metric">
+      <div class="hm-label">Monthly Spend</div>
+      <div class="hm-val" id="hm-spend">—</div>
+      <div class="hm-sub" id="hm-spend-pct"></div>
+    </div>
+    <div class="health-metric">
+      <div class="hm-label">Monthly Surplus</div>
+      <div class="hm-val" id="hm-surplus">—</div>
+      <div class="hm-sub" id="hm-surplus-sub"></div>
+    </div>
+    <div class="health-metric">
+      <div class="hm-label">Savings Rate</div>
+      <div class="hm-val" id="hm-rate">—</div>
+      <div class="hm-sub" id="hm-rate-sub"></div>
+    </div>
+  </div>
+  <div class="surplus-bar-wrap"><div class="surplus-bar" id="surplus-bar" style="width:0%"></div></div>
+  <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:16px">
+    <span>Spend</span><span id="surplus-bar-label"></span><span>Income</span>
+  </div>
+  <div class="alloc-grid">
+    <div class="alloc-item savings">
+      <div class="al-label">Emergency Fund</div>
+      <div class="al-amt" id="al-emergency">—</div>
+      <div class="al-sub">10% · build to 6mo expenses</div>
+    </div>
+    <div class="alloc-item invest">
+      <div class="al-label">Invest</div>
+      <div class="al-amt" id="al-invest">—</div>
+      <div class="al-sub">15% · Roth IRA + index funds</div>
+    </div>
+    <div class="alloc-item travel">
+      <div class="al-label">Travel Budget</div>
+      <div class="al-amt" id="al-travel">—</div>
+      <div class="al-sub">8% · monthly allocation</div>
+    </div>
+    <div class="alloc-item spend">
+      <div class="al-label">Discretionary</div>
+      <div class="al-amt" id="al-disc">—</div>
+      <div class="al-sub">30% · dining, shopping, fun</div>
+    </div>
+    <div class="alloc-item needs">
+      <div class="al-label">Needs</div>
+      <div class="al-amt" id="al-needs">—</div>
+      <div class="al-sub">37% · rent, utilities, insurance</div>
+    </div>
+  </div>
+</div>
 
 <!-- Detail -->
 <div class="two-col">
@@ -173,7 +258,48 @@ function renderAll() {
   netEl.textContent = fmt(s.net_worth);
   netEl.className   = 'value ' + (s.net_worth >= 0 ? 'green' : 'red');
   renderAccountCards();
+  renderHealth();
   _selectInst(_selectedInst, false);
+}
+
+function renderHealth() {
+  const d = _data, s = d.summary || {}, recs = d.recommended_allocations || {};
+  const income = s.monthly_income || 0;
+  if (!income) { document.getElementById('health-card').style.display='none'; return; }
+  document.getElementById('health-card').style.display='block';
+
+  const spend   = s.total_discretionary || 0;
+  const surplus = s.monthly_surplus || 0;
+  const rate    = s.savings_rate_pct || 0;
+
+  document.getElementById('hm-income').textContent = fmt(income);
+  document.getElementById('hm-income-sub').textContent =
+    (d.income_transactions||[]).map(t=>t.name).filter((v,i,a)=>a.indexOf(v)===i).join(', ');
+  document.getElementById('hm-spend').textContent  = fmt(spend);
+  document.getElementById('hm-spend-pct').textContent = income ? `${(spend/income*100).toFixed(0)}% of income` : '';
+
+  const surplusEl = document.getElementById('hm-surplus');
+  surplusEl.textContent = (surplus >= 0 ? '+' : '') + fmt(surplus);
+  surplusEl.className = 'hm-val ' + (surplus >= 0 ? 'green' : 'red');
+  document.getElementById('hm-surplus-sub').textContent = surplus >= 0 ? 'left after spending' : 'over income';
+
+  const rateEl = document.getElementById('hm-rate');
+  rateEl.textContent = rate.toFixed(1) + '%';
+  rateEl.className = 'hm-val ' + (rate >= 20 ? 'green' : rate >= 10 ? 'yellow' : 'red');
+  document.getElementById('hm-rate-sub').textContent = rate >= 20 ? 'On track' : rate >= 10 ? 'Below target (20%)' : 'Low — aim for 20%';
+
+  const barPct = income ? Math.min(spend / income * 100, 100) : 0;
+  const bar = document.getElementById('surplus-bar');
+  bar.style.width = barPct + '%';
+  bar.className = 'surplus-bar' + (spend > income ? ' overspent' : '');
+  document.getElementById('surplus-bar-label').textContent =
+    `${fmt(spend)} spent of ${fmt(income)}`;
+
+  document.getElementById('al-emergency').textContent = fmt(recs.savings_emergency);
+  document.getElementById('al-invest').textContent    = fmt(recs.investment);
+  document.getElementById('al-travel').textContent    = fmt(recs.travel);
+  document.getElementById('al-disc').textContent      = fmt(recs.discretionary);
+  document.getElementById('al-needs').textContent     = fmt(recs.needs);
 }
 
 function renderAccountCards() {
