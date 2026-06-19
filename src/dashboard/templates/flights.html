@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% set active = "flights" %}
+{% block title %}Flights — Alfred{% endblock %}
+
+{% block extra_style %}
+.filter-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:20px; }
+.filter-bar input[type=text] {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:6px 12px; border-radius:var(--radius); font-size:12px; width:220px; font-family:var(--font-ui);
+}
+.filter-bar input[type=text]:focus { outline:none; border-color:var(--accent); }
+.filter-bar select {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:6px 12px; border-radius:var(--radius); font-size:12px; cursor:pointer; font-family:var(--font-ui);
+}
+.stat-row { display:flex; gap:12px; margin-bottom:20px; }
+.mini-stat { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+             padding:10px 16px; font-size:11px; color:var(--text2); white-space:nowrap; }
+.mini-stat strong { color:var(--text); font-size:14px; font-family:var(--font-num); display:block; }
+.route-cell { font-weight:700; font-family:var(--font-num); font-size:13px; color:var(--text); }
+.dest-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+.price-big { font-size:15px; font-weight:700; font-family:var(--font-num); color:var(--text); }
+.deal-pct { font-weight:700; font-size:12px; color:var(--green); }
+.watch-pct { font-size:12px; color:var(--muted); }
+.deal-badge { background:var(--green-bg); color:var(--green); border-radius:var(--radius-sm);
+              padding:2px 7px; font-size:10px; font-weight:700; letter-spacing:.05em; }
+.watch-badge { background:var(--surface2); color:var(--muted); border-radius:var(--radius-sm);
+               padding:2px 7px; font-size:10px; }
+.deal-date-list { display:flex; flex-direction:column; gap:2px; }
+.deal-date-row { font-size:11px; white-space:nowrap; }
+.links-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text2);
+             border-radius:var(--radius-sm); padding:3px 8px; font-size:11px; cursor:pointer; font-family:var(--font-ui); }
+.links-btn:hover { background:var(--surface3); }
+.links-menu { display:none; position:absolute; right:0; top:calc(100% + 4px);
+              background:var(--surface); border:1px solid var(--border);
+              border-radius:var(--radius); min-width:220px; z-index:999;
+              box-shadow:0 6px 20px rgba(0,0,0,.08); overflow:hidden; }
+.links-menu a { display:block; padding:8px 12px; font-size:12px; color:var(--text2);
+                text-decoration:none; border-bottom:1px solid var(--border); }
+.links-menu a:last-child { border-bottom:none; }
+.links-menu a:hover { background:var(--surface2); color:var(--text); }
+.links-wrap { position:relative; display:inline-block; }
+.links-wrap.open .links-menu { display:block; }
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>✈️ Flights & Hotels</h1>
+  <span class="subtitle" id="flights-subtitle">Loading…</span>
+</div>
+
+<div class="filter-bar">
+  <input type="text" id="flight-search" placeholder="Route, city, airport…" oninput="filterFlights()">
+  <select id="filter-deals" onchange="filterFlights()">
+    <option value="">All routes</option>
+    <option value="deal">🔥 Deals only</option>
+    <option value="watching">Watching (no deal)</option>
+  </select>
+  <select id="filter-origin" onchange="filterFlights()">
+    <option value="">All origins</option>
+    <option value="JFK">JFK</option>
+    <option value="LGA">LGA</option>
+    <option value="EWR">EWR</option>
+  </select>
+  <select id="filter-month" onchange="filterFlights()"><option value="">All months</option></select>
+  <select id="filter-dest" onchange="filterFlights()"><option value="">All destinations</option></select>
+</div>
+
+<div class="stat-row">
+  <div class="mini-stat"><strong id="cnt-routes">–</strong>Routes</div>
+  <div class="mini-stat"><strong id="cnt-deals">–</strong>Active deals</div>
+  <div class="mini-stat"><strong id="cnt-avg-pct">–</strong>Avg below typical</div>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Route</th><th>Destination</th><th>Current</th><th>Typical / Low</th>
+        <th>Below Avg</th><th>Deal Dates</th><th>Scans</th><th>Last Seen</th><th>Status</th><th>Links</th>
+      </tr>
+    </thead>
+    <tbody id="flights-body"></tbody>
+  </table>
+  <div class="empty" id="flights-empty" style="display:none">No flight data yet — run the flight monitor first.</div>
+</div>
+
+<script>
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+let allFlights = [];
+
+async function loadFlights() {
+  const res = await fetch('/api/lifestyle/flights');
+  allFlights = await res.json();
+  document.getElementById('flights-subtitle').textContent = allFlights.length + ' routes tracked';
+  populateMonthFilter();
+  populateDestFilter();
+  updateCounts();
+  filterFlights();
+}
+
+function updateCounts() {
+  const deals = allFlights.filter(r=>r.is_deal);
+  document.getElementById('cnt-routes').textContent = allFlights.length;
+  document.getElementById('cnt-deals').textContent = deals.length;
+  const avg = deals.length ? Math.round(deals.reduce((s,r)=>s+r.pct_below,0)/deals.length) : 0;
+  document.getElementById('cnt-avg-pct').textContent = deals.length ? avg+'%' : '—';
+}
+
+function populateMonthFilter() {
+  const months = new Set();
+  allFlights.forEach(r=>(r.deal_dates||[]).forEach(d=>{ if(d.depart){ const[y,m]=d.depart.split('-'); months.add(`${y}-${m}`); } }));
+  const sel = document.getElementById('filter-month');
+  sel.innerHTML = '<option value="">All months</option>';
+  [...months].sort().forEach(ym=>{ const[y,m]=ym.split('-'); const o=document.createElement('option'); o.value=ym; o.textContent=`${MONTHS[parseInt(m)-1]} ${y}`; sel.appendChild(o); });
+}
+
+function populateDestFilter() {
+  const groups = {};
+  allFlights.forEach(r=>{ if(!groups[r.route_city]) groups[r.route_city]=new Set(); groups[r.route_city].add(r.dest); });
+  const sel = document.getElementById('filter-dest');
+  sel.innerHTML = '<option value="">All destinations</option>';
+  Object.keys(groups).sort().forEach(city=>{ const o=document.createElement('option'); o.value=city; o.textContent=`${city} (${[...groups[city]].sort().join(', ')})`; sel.appendChild(o); });
+}
+
+function filterFlights() {
+  const q = document.getElementById('flight-search').value.toLowerCase();
+  const df = document.getElementById('filter-deals').value;
+  const org = document.getElementById('filter-origin').value;
+  const mo = document.getElementById('filter-month').value;
+  const dest = document.getElementById('filter-dest').value;
+  const f = allFlights.filter(r=>{
+    const mq = !q||r.route.toLowerCase().includes(q)||r.dest_city.toLowerCase().includes(q)||r.dest.toLowerCase().includes(q);
+    const md = !df||(df==='deal'?r.is_deal:!r.is_deal);
+    const mo2 = !org||r.origin===org;
+    const mm = !mo||(r.deal_dates||[]).some(d=>d.depart&&d.depart.startsWith(mo));
+    const mdst = !dest||r.route_city===dest;
+    return mq&&md&&mo2&&mm&&mdst;
+  });
+  renderFlights(f);
+}
+
+function fmtDate(iso) {
+  if(!iso) return '';
+  const[,m,d]=iso.split('-');
+  return `${MONTHS[parseInt(m)-1].slice(0,3)} ${parseInt(d)}`;
+}
+function fmtNL(iso) { const[y,m,d]=iso.split('-'); return `${MONTHS[parseInt(m)-1]}+${parseInt(d)}`; }
+function fmtNLY(iso) { const[y,m,d]=iso.split('-'); return `${MONTHS[parseInt(m)-1]}+${parseInt(d)}+${y}`; }
+function nextFriday() {
+  const t=new Date(), day=t.getDay(), diff=day<=5?(5-day||7):6, f=new Date(t);
+  f.setDate(t.getDate()+diff); return f.toISOString().slice(0,10);
+}
+function addDays(iso,n) { const d=new Date(iso); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function flightUrl(org,dst,dep,ret) {
+  return `https://www.google.com/travel/flights/search?q=flights+from+${org}+to+${dst}+${fmtNL(dep)}+returning+${fmtNLY(ret)}&hl=en&curr=USD`;
+}
+function hotelUrl(city,ci,co) {
+  const c=city.toLowerCase().replace(/[\s,()]+/g,'+').replace(/\++$/,'');
+  return `https://www.google.com/travel/hotels?q=hotels+in+${c}+${fmtNL(ci)}+to+${fmtNLY(co)}&hl=en&curr=USD&adults=2&gl=us`;
+}
+
+function linksDropdown(links) {
+  const items=links.map(l=>`<a href="${l.url}" target="_blank">${l.icon} ${l.label}</a>`).join('');
+  return `<div class="links-wrap" onclick="toggleMenu(event,this)">
+    <button class="links-btn">Links ▾</button>
+    <div class="links-menu">${items}</div>
+  </div>`;
+}
+function toggleMenu(e,wrap) {
+  e.stopPropagation();
+  document.querySelectorAll('.links-wrap.open').forEach(w=>{ if(w!==wrap) w.classList.remove('open'); });
+  wrap.classList.toggle('open');
+}
+document.addEventListener('click',()=>document.querySelectorAll('.links-wrap.open').forEach(w=>w.classList.remove('open')));
+
+function renderFlights(routes) {
+  const tbody = document.getElementById('flights-body');
+  tbody.innerHTML = '';
+  document.getElementById('flights-empty').style.display = routes.length?'none':'block';
+  routes.forEach(r=>{
+    const tr = document.createElement('tr');
+    const pctCls = r.is_deal ? 'deal-pct' : 'watch-pct';
+    const pctStr = r.pct_below>0 ? `-${r.pct_below}% below` : `+${Math.abs(r.pct_below)}% above`;
+    const badge = r.is_deal ? `<span class="deal-badge">🔥 DEAL</span>` : `<span class="watch-badge">Watching</span>`;
+    const dealDates = r.deal_dates||[];
+    let datesHtml = `<span style="color:var(--muted);font-size:11px">No deals yet</span>`;
+    if(dealDates.length) {
+      datesHtml = `<div class="deal-date-list">${dealDates.map(d=>{
+        const range = d.depart?(d.ret?`${fmtDate(d.depart)} – ${fmtDate(d.ret)}`:fmtDate(d.depart)):'last scan';
+        return `<div class="deal-date-row">
+          <span style="font-weight:500">${range}</span>
+          <span style="color:var(--muted);margin:0 4px">·</span>
+          <span style="font-family:var(--font-num)">$${d.price}</span>
+          <span style="color:var(--muted);margin:0 4px">·</span>
+          <span style="color:var(--green);font-weight:600">${d.pct}% off</span>
+        </div>`;
+      }).join('')}</div>`;
+    }
+    const links = [];
+    if(dealDates.length) {
+      dealDates.forEach(d=>{
+        const dep=d.depart||nextFriday(), ret=d.ret||addDays(dep,3);
+        const lbl=d.depart?fmtDate(dep):'next weekend';
+        links.push({icon:'✈️',label:`Flights ${lbl}  $${d.price}`,url:flightUrl(r.origin,r.dest,dep,ret)});
+        links.push({icon:'🏨',label:`Hotels ${lbl}`,url:hotelUrl(r.route_city,dep,ret)});
+      });
+    } else {
+      const dep=nextFriday(), ret=addDays(dep,3);
+      links.push({icon:'✈️',label:'Flights (next weekend)',url:flightUrl(r.origin,r.dest,dep,ret)});
+      links.push({icon:'🏨',label:'Hotels (next weekend)',url:hotelUrl(r.route_city,dep,ret)});
+    }
+    links.push({icon:'🗺️',label:`${r.dest_city} on Maps`,url:`https://www.google.com/maps/search/${encodeURIComponent(r.dest_city)}`});
+    tr.innerHTML = `
+      <td><div class="route-cell">${r.origin} → ${r.dest}</div></td>
+      <td><div style="font-weight:500">${r.dest_city}</div><div class="dest-sub">${r.origin_city}</div></td>
+      <td class="price-big">$${r.current}</td>
+      <td><span style="color:var(--text2)">$${r.avg} avg</span> &nbsp; <span style="color:var(--muted)">$${r.low} low</span></td>
+      <td class="${pctCls}">${pctStr}</td>
+      <td>${datesHtml}</td>
+      <td style="color:var(--muted);font-size:12px">${r.scans}</td>
+      <td style="color:var(--muted);font-size:11px">${r.last_seen}</td>
+      <td>${badge}</td>
+      <td>${linksDropdown(links)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+loadFlights();
+setInterval(loadFlights, 60000);
+</script>
+{% endblock %}

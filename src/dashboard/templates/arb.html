@@ -1,0 +1,464 @@
+{% extends "base.html" %}
+{% block title %}Arb Opportunities{% endblock %}
+
+{% block extra_style %}
+/* ── Row flash ── */
+.arb-row { transition: background .25s; }
+.arb-row.flash { animation: rowflash .5s ease; }
+@keyframes rowflash { 0%{background:rgba(62,207,142,.2)} 100%{background:transparent} }
+
+/* ── Margin display ── */
+.margin-wrap { display:flex; flex-direction:column; gap:1px; }
+.margin-net  { font-family:var(--font-num); font-weight:700; font-size:13px; color:var(--green); }
+.margin-gross{ font-family:var(--font-num); font-size:10px; color:var(--muted); }
+.margin-bar  { height:3px; border-radius:2px; background:var(--green); opacity:.7; margin-top:3px; }
+
+/* ── Age timer ── */
+.age { font-family:var(--font-num); font-size:10px; }
+.age.stale { color:var(--red); }
+.age.fresh { color:var(--muted); }
+
+/* ── Expanded leg panel ── */
+.legs-row td { background:var(--surface2); padding:0; }
+.expand-inner { padding:12px 16px 14px 36px; }
+.expand-desc { margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+.expand-event { font-size:13px; font-weight:600; line-height:1.4; margin-bottom:4px; }
+.expand-meta  { display:flex; gap:10px; flex-wrap:wrap; font-size:11px; color:var(--text2); margin-top:4px; }
+.expand-meta a { color:var(--accent); text-decoration:none; }
+.expand-meta a:hover { text-decoration:underline; }
+
+.leg-line { display:flex; gap:8px; align-items:center; padding:6px 0;
+  border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.leg-line:last-child { border-bottom:none; }
+.leg-outcome { flex:1; min-width:0; font-size:12px; font-weight:500; }
+.leg-desc-small { font-size:10px; color:var(--muted); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; max-width:200px; }
+.leg-right { display:flex; align-items:center; gap:10px; margin-left:auto; flex-shrink:0; }
+.leg-price-wrap { display:flex; flex-direction:column; align-items:flex-end; gap:1px; }
+.leg-raw  { font-family:var(--font-num); font-size:10px; color:var(--muted); text-decoration:line-through; }
+.leg-eff  { font-family:var(--font-num); font-weight:700; font-size:13px; }
+.leg-view-link { color:var(--accent); font-size:10px; text-decoration:none; white-space:nowrap; }
+.leg-view-link:hover { text-decoration:underline; }
+.paper-btn {
+  background: var(--green-bg);
+  border: 1px solid rgba(62,207,142,.3);
+  color: var(--green);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background .1s;
+}
+.paper-btn:hover { background: rgba(62,207,142,.2); }
+.toggle-btn { background:none; border:none; color:var(--muted); cursor:pointer; font-size:10px; padding:0 4px; }
+
+/* ── Filter bars ── */
+.filter-bar { display:flex; gap:6px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+.filter-bar:last-of-type { margin-bottom:16px; }
+.filter-chip {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background .1s, border-color .1s, color .1s;
+  font-family: var(--font-ui);
+  color: var(--text2);
+}
+.filter-chip.active { border-color: var(--accent); color: var(--text); background: rgba(124,131,245,.12); }
+.filter-chip:hover { color: var(--text); border-color: var(--border2); }
+.filter-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.min-margin-wrap { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text2); }
+input[type=range] { accent-color:var(--accent); }
+{% endblock %}
+
+{% set active = 'arb' %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Live Arb Opportunities</h1>
+  <span class="subtitle" id="sub-title">waiting for first cycle…</span>
+</div>
+
+<!-- Sport filter -->
+<div class="filter-bar" id="filter-bar">
+  <span class="filter-label">Sport:</span>
+  <button class="filter-chip active" data-sport="all">All</button>
+  <div class="min-margin-wrap">
+    Min net margin: <strong id="min-margin-label">0%</strong>
+    <input type="range" id="min-margin-slider" min="0" max="10" step="0.5" value="0" style="width:100px">
+  </div>
+</div>
+
+<!-- Urgency summary chips -->
+<div id="urgency-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+  <span class="filter-label">Urgency:</span>
+  <span id="urg-today"  class="horizon-chip filter-chip" data-horizon="today"  title="Expires today">Today <strong>0</strong></span>
+  <span id="urg-week"   class="horizon-chip filter-chip" data-horizon="week"   title="Expires within 7 days">7d <strong>0</strong></span>
+  <span id="urg-month"  class="horizon-chip filter-chip" data-horizon="30"     title="Expires within 30 days">30d <strong>0</strong></span>
+  <span id="urg-q"      class="horizon-chip filter-chip" data-horizon="90"     title="Expires within 90 days">90d <strong>0</strong></span>
+  <span id="urg-half"   class="horizon-chip filter-chip" data-horizon="180"    title="Expires within 180 days">180d <strong>0</strong></span>
+  <span id="urg-all"    class="horizon-chip filter-chip active" data-horizon="all">All <strong id="urg-all-count">0</strong></span>
+</div>
+
+<div class="card" id="arb-card">
+  <div class="card-header">
+    <h3>Opportunities <span id="arb-count-badge" class="badge green">0</span></h3>
+    <span class="ts" id="cycle-label">—</span>
+  </div>
+  <table id="arb-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Event</th>
+        <th data-sort="sport">Sport</th>
+        <th>Type</th>
+        <th data-sort="margin_pct" class="sorted-desc">Net margin ▼</th>
+        <th data-sort="gross_margin_pct">Gross</th>
+        <th data-sort="total_stake">Stake</th>
+        <th data-sort="profit">Profit</th>
+        <th>Sources</th>
+        <th data-sort="days_left">Expires</th>
+        <th data-sort="age_s">Age</th>
+      </tr>
+    </thead>
+    <tbody id="arb-tbody">
+      <tr><td colspan="11" class="empty">Waiting for live data…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block extra_script %}
+<script>
+makeTableSortable('arb-table');
+
+const slider = document.getElementById('min-margin-slider');
+const sliderLabel = document.getElementById('min-margin-label');
+slider.addEventListener('input', () => {
+  sliderLabel.textContent = slider.value + '%';
+  _renderArbs(_lastArbs);
+});
+
+let _lastArbs = [];
+let _sportFilter = 'all';
+let _activeHorizon = 'all';
+let _knownIds = new Set();
+
+// Sport filter chips
+document.getElementById('filter-bar').addEventListener('click', e => {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip || !chip.dataset.sport) return;
+  _sportFilter = chip.dataset.sport;
+  document.querySelectorAll('#filter-bar .filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+  _renderArbs(_lastArbs);
+});
+
+function _setHorizon(h) {
+  _activeHorizon = h;
+  document.querySelectorAll('.horizon-chip').forEach(c =>
+    c.classList.toggle('active', c.dataset.horizon === h));
+  _renderArbs(_lastArbs);
+}
+
+// Expiry horizon chips (now in urgency-bar)
+document.getElementById('urgency-bar').addEventListener('click', e => {
+  const chip = e.target.closest('.horizon-chip');
+  if (!chip) return;
+  _setHorizon(chip.dataset.horizon);
+});
+
+window.addEventListener('arbstate', e => {
+  const d = e.detail;
+  _lastArbs = d.arbs || [];
+
+  // Update sport filter chips
+  const sports = [...new Set(_lastArbs.map(a => a.sport))];
+  _syncSportChips(sports);
+
+  // Update subtitle + cycle label
+  document.getElementById('sub-title').textContent =
+    `${_lastArbs.length} opportunities · fee-adjusted net margins`;
+  document.getElementById('cycle-label').textContent =
+    d.last_updated ? 'Updated ' + new Date(d.last_updated + 'Z').toLocaleTimeString() : '—';
+  document.getElementById('arb-count-badge').textContent = _lastArbs.length;
+
+  _renderArbs(_lastArbs);
+});
+
+function _syncSportChips(sports) {
+  const bar = document.getElementById('filter-bar');
+  const existing = new Set([...bar.querySelectorAll('.filter-chip')].map(c => c.dataset.sport));
+  sports.forEach(s => {
+    if (!existing.has(s)) {
+      const chip = document.createElement('button');
+      chip.className = 'filter-chip';
+      chip.dataset.sport = s;
+      chip.textContent = s;
+      bar.insertBefore(chip, bar.querySelector('.min-margin-wrap'));
+    }
+  });
+}
+
+// Track which rows are currently expanded so re-renders preserve state
+let _expandedIds = new Set();
+
+function _daysLeft(isoStr) {
+  if (!isoStr) return null;
+  const ms = new Date(isoStr).getTime() - Date.now();
+  return Math.ceil(ms / 86400000);
+}
+
+function _fmtExpiry(isoStr) {
+  const d = _daysLeft(isoStr);
+  if (d === null) return '<span class="ts">—</span>';
+  if (d < 0) return '<span style="color:var(--red)">Expired</span>';
+  if (d === 0) return '<span style="color:var(--red)">Today</span>';
+  const color = d <= 30 ? 'var(--red)' : d <= 90 ? 'var(--yellow,#f59e0b)' : 'var(--muted)';
+  const date = new Date(isoStr).toLocaleDateString(undefined, {month:'short', day:'numeric'});
+  return `<span style="color:${color};font-size:11px">${date}<br><span style="font-size:10px">${d}d</span></span>`;
+}
+
+function _horizonMatch(isoStr, horizon) {
+  if (horizon === 'all') return true;
+  const d = _daysLeft(isoStr);
+  if (horizon === 'today') return d !== null && d >= 0 && d <= 0;
+  if (horizon === 'week')  return d !== null && d >= 0 && d <= 7;
+  if (horizon === '30')    return d !== null && d >= 0 && d <= 30;
+  if (horizon === '90')    return d !== null && d >= 0 && d <= 90;
+  if (horizon === '180')   return d !== null && d >= 0 && d <= 180;
+  if (horizon === '180+')  return d === null || d > 180;
+  return true;
+}
+
+function _updateUrgencyCounts(arbs) {
+  const buckets = { today:0, week:0, '30':0, '90':0, '180':0, all:0 };
+  const minM = parseFloat(document.getElementById('min-margin-slider').value);
+  arbs.filter(a => (_sportFilter==='all'||a.sport===_sportFilter) && a.margin_pct>=minM)
+    .forEach(a => {
+      const d = _daysLeft(a.earliest_expiry);
+      buckets.all++;
+      if (d !== null && d >= 0) {
+        if (d <= 0)   buckets.today++;
+        if (d <= 7)   buckets.week++;
+        if (d <= 30)  buckets['30']++;
+        if (d <= 90)  buckets['90']++;
+        if (d <= 180) buckets['180']++;
+      }
+    });
+  const labels = { today:'Today', week:'7d', '30':'30d', '90':'90d', '180':'180d' };
+  ['today','week','30','90','180'].forEach(k => {
+    const el = document.getElementById(`urg-${k==='today'?'today':k==='week'?'week':k==='30'?'month':k==='90'?'q':'half'}`);
+    if (el) {
+      el.querySelector('strong').textContent = buckets[k];
+      el.style.borderColor = buckets[k] > 0 ? 'var(--accent)' : '';
+      el.style.color = buckets[k] > 0 ? 'var(--text)' : '';
+    }
+  });
+  const allEl = document.getElementById('urg-all-count');
+  if (allEl) allEl.textContent = buckets.all;
+}
+
+function _renderArbs(arbs) {
+  const minMargin = parseFloat(slider.value);
+  const filtered = arbs.filter(a =>
+    (_sportFilter === 'all' || a.sport === _sportFilter) &&
+    a.margin_pct >= minMargin &&
+    _horizonMatch(a.earliest_expiry, _activeHorizon)
+  );
+
+  _updateUrgencyCounts(arbs);
+
+  const tbody = document.getElementById('arb-tbody');
+  if (!filtered.length) {
+    const allCount = arbs.filter(a =>
+      (_sportFilter==='all'||a.sport===_sportFilter) && a.margin_pct>=minMargin
+    ).length;
+    const msg = _activeHorizon !== 'all' && allCount > 0
+      ? `No ${_activeHorizon==='today'?'same-day':_activeHorizon==='week'?'7-day':_activeHorizon+'-day'} arbs right now — <a href="#" onclick="_setHorizon('all');return false">${allCount} total available</a>`
+      : 'No opportunities match current filters.';
+    tbody.innerHTML = `<tr><td colspan="11" class="empty">${msg}</td></tr>`;
+    return;
+  }
+
+  const now = Date.now();
+  const newIds = new Set(filtered.map(a => a.id));
+  const addedIds = [...newIds].filter(id => !_knownIds.has(id));
+  _knownIds = newIds;
+
+  tbody.innerHTML = filtered.map(a => {
+    const detectedMs = new Date(a.detected_at + 'Z').getTime();
+    const ageS = Math.round((now - detectedMs) / 1000);
+    const dLeft = _daysLeft(a.earliest_expiry);
+    const hue = Math.min(a.margin_pct / 8, 1);
+    const bg = `rgba(62,207,142,${(hue * 0.18).toFixed(2)})`;
+    const isNew = addedIds.includes(a.id);
+
+    return `
+    <tr class="arb-row data-row${isNew ? ' flash' : ''}"
+        data-id="${a.id}"
+        data-sport="${a.sport}"
+        data-margin_pct="${a.margin_pct}"
+        data-gross_margin_pct="${a.gross_margin_pct}"
+        data-total_stake="${a.total_stake}"
+        data-profit="${a.profit}"
+        data-days_left="${dLeft ?? 9999}"
+        data-age_s="${ageS}"
+        style="background:${bg};cursor:pointer"
+        onclick="toggleLegs('${a.id}')">
+      <td><button class="toggle-btn" id="btn-${a.id}">${_expandedIds.has(a.id) ? '▼' : '▶'}</button></td>
+      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${a.event_name}">${a.event_name}</td>
+      <td><span class="badge blue">${a.sport}</span></td>
+      <td class="ts">${a.market_type}</td>
+      <td>
+        <div class="margin-wrap">
+          <span class="margin-net">${a.margin_pct.toFixed(2)}%</span>
+          <div class="margin-bar" style="width:${Math.min(a.margin_pct*10,100)}px"></div>
+        </div>
+      </td>
+      <td><span class="margin-gross">${a.gross_margin_pct.toFixed(2)}%</span></td>
+      <td>$${a.total_stake.toFixed(2)}</td>
+      <td class="price good">$${a.profit.toFixed(2)}</td>
+      <td>${a.sources.map(s => {
+        const url = a.market_urls?.[s];
+        const tag = `<span class="source-tag source-${s}">${s}</span>`;
+        return url
+          ? `<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="text-decoration:none" title="View on ${s}">${tag}</a>`
+          : tag;
+      }).join(' ')}</td>
+      <td style="white-space:nowrap">${_fmtExpiry(a.earliest_expiry)}</td>
+      <td><span class="age ${ageS > 60 ? 'stale' : 'fresh'}" data-detected="${a.detected_at}">${_fmtAge(ageS)}</span></td>
+    </tr>
+    <tr class="legs-row" id="legs-${a.id}" style="display:${_expandedIds.has(a.id) ? 'table-row' : 'none'}">
+      <td colspan="11">
+        <div class="expand-inner">
+
+          <!-- Description header -->
+          <div class="expand-desc">
+            <div class="expand-event">${a.event_name}</div>
+            <div class="expand-meta">
+              ${_descMeta(a)}
+            </div>
+          </div>
+
+          <!-- Legs -->
+          ${a.legs.map((l, i) => `
+          <div class="leg-line">
+            <span class="source-tag source-${l.source}">${l.source}</span>
+            <span class="ts">${l.bookmaker || '—'}</span>
+            <span class="leg-outcome">${_legLabel(l, a.event_name)}</span>
+            <div class="leg-right">
+              <span class="ts">${l.side}</span>
+              <div class="leg-price-wrap">
+                ${l.price !== l.effective_price ? `<span class="leg-raw">${l.price.toFixed(3)}</span>` : ''}
+                <span class="leg-eff">${l.effective_price.toFixed(3)}</span>
+              </div>
+              <span style="color:var(--muted);font-size:11px">stake</span>
+              <span class="price good">$${l.stake.toFixed(2)}</span>
+              ${l.market_url ? `<a class="leg-view-link" href="${l.market_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View →</a>` : ''}
+              ${i === 0 ? `<button class="paper-btn" onclick="event.stopPropagation();paperTrade('${a.id}')">Paper trade</button>` : ''}
+            </div>
+          </div>`).join('')}
+
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// Build the description meta line (expiry + volume) for the expand header
+function _descMeta(a) {
+  const parts = [];
+
+  // Collect unique expiry dates and volumes from legs
+  const seen = new Set();
+  a.legs.forEach(l => {
+    const key = l.source + ':' + l.market_id;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    if (l.expires) {
+      const exp = new Date(l.expires);
+      const now = new Date();
+      const daysLeft = Math.ceil((exp - now) / 86400000);
+      const label = daysLeft > 0
+        ? `Expires ${exp.toLocaleDateString(undefined, {month:'short',day:'numeric',year:'numeric'})} (${daysLeft}d)`
+        : `Expired`;
+      parts.push(`<span>⏱ ${label}</span>`);
+    }
+    if (l.volume != null && l.volume > 0) {
+      parts.push(`<span>💧 $${_fmtVol(l.volume)} volume on ${l.bookmaker || l.source}</span>`);
+    }
+    if (l.description && l.description !== a.event_name) {
+      // Show if description adds context beyond the event_name shown above
+      const shortDesc = l.description.length > 120 ? l.description.slice(0, 117) + '…' : l.description;
+      parts.push(`<span title="${l.description.replace(/"/g,'&quot;')}">${shortDesc}</span>`);
+    }
+    if (l.market_url) {
+      const host = (() => { try { return new URL(l.market_url).hostname.replace('www.',''); } catch { return l.source; } })();
+      parts.push(`<a href="${l.market_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">📎 ${host}</a>`);
+    }
+  });
+
+  return parts.join(' &nbsp;·&nbsp; ') || '<span style="color:var(--muted)">No additional metadata</span>';
+}
+
+// Label for a leg outcome — give it context if it's just "Yes"/"No"
+function _legLabel(l, eventName) {
+  const o = l.outcome;
+  // If the outcome is generic (Yes/No/1/2) annotate with the question
+  if (/^(yes|no|1|2)$/i.test(o.trim())) {
+    const short = eventName.length > 60 ? eventName.slice(0, 57) + '…' : eventName;
+    return `<strong>${o}</strong> <span class="leg-desc-small" title="${eventName}">— ${short}</span>`;
+  }
+  return `<strong>${o}</strong>`;
+}
+
+function _fmtVol(v) {
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
+  if (v >= 1_000) return (v / 1_000).toFixed(0) + 'K';
+  return v.toFixed(0);
+}
+
+function toggleLegs(id) {
+  const row = document.getElementById('legs-' + id);
+  const btn = document.getElementById('btn-' + id);
+  if (!row) return;
+  const hidden = row.style.display === 'none';
+  row.style.display = hidden ? 'table-row' : 'none';
+  btn.textContent = hidden ? '▼' : '▶';
+  if (hidden) _expandedIds.add(id); else _expandedIds.delete(id);
+}
+
+async function paperTrade(arbId) {
+  const r = await fetch(`/api/paper-trade/${arbId}`, { method: 'POST' });
+  const j = await r.json();
+  if (j.position_id) {
+    _flash(`Paper position ${j.position_id} opened — stake $${j.stake.toFixed(2)}`);
+  } else {
+    _flash(j.error || 'Failed to open position');
+  }
+}
+
+function _fmtAge(s) {
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+
+// Tick age counters every second
+setInterval(() => {
+  document.querySelectorAll('.age[data-detected]').forEach(el => {
+    const s = Math.round((Date.now() - new Date(el.dataset.detected + 'Z').getTime()) / 1000);
+    el.textContent = _fmtAge(s);
+    el.className = 'age ' + (s > 60 ? 'stale' : 'fresh');
+    const row = el.closest('tr');
+    if (row) row.dataset.age_s = s;
+  });
+}, 1000);
+</script>
+{% endblock %}

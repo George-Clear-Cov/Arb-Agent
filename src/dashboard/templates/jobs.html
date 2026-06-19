@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% set active = "jobs" %}
+{% block title %}Jobs — Alfred{% endblock %}
+
+{% block extra_style %}
+.filter-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:20px; }
+.filter-bar input[type=text] {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:6px 12px; border-radius:var(--radius); font-size:12px; width:240px;
+  font-family:var(--font-ui);
+}
+.filter-bar input[type=text]:focus { outline:none; border-color:var(--accent); }
+.filter-bar select {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:6px 12px; border-radius:var(--radius); font-size:12px; cursor:pointer;
+  font-family:var(--font-ui);
+}
+.stat-row { display:flex; gap:12px; margin-bottom:20px; }
+.mini-stat { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+             padding:10px 16px; font-size:11px; color:var(--text2); white-space:nowrap; }
+.mini-stat strong { color:var(--text); font-size:14px; font-family:var(--font-num); display:block; }
+.company-cell { font-weight:600; color:var(--text); }
+.title-link { color:var(--accent); text-decoration:none; font-weight:500; }
+.title-link:hover { text-decoration:underline; }
+.loc { color:var(--text2); font-size:12px; }
+.sal { color:var(--green); font-size:12px; font-weight:600; }
+.sal.none { color:var(--muted); }
+.found-date { color:var(--muted); font-size:11px; }
+select.status-sel {
+  border:none; border-radius:var(--radius-sm); padding:3px 8px;
+  font-size:11px; font-weight:600; cursor:pointer; font-family:var(--font-ui);
+}
+.s-new          { background:#dbeafe; color:#1d4ed8; }
+.s-saved        { background:#d1fae5; color:#065f46; }
+.s-applied      { background:#fef3c7; color:#92400e; }
+.s-interviewing { background:#ede9fe; color:#5b21b6; }
+.s-rejected     { background:#fee2e2; color:#991b1b; }
+.links-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text2);
+             border-radius:var(--radius-sm); padding:3px 8px; font-size:11px; cursor:pointer;
+             font-family:var(--font-ui); }
+.links-btn:hover { background:var(--surface3); }
+.links-menu { display:none; position:absolute; right:0; top:calc(100% + 4px);
+              background:var(--surface); border:1px solid var(--border);
+              border-radius:var(--radius); min-width:210px; z-index:999;
+              box-shadow:0 6px 20px rgba(0,0,0,.08); overflow:hidden; }
+.links-menu a { display:block; padding:8px 12px; font-size:12px; color:var(--text2);
+                text-decoration:none; border-bottom:1px solid var(--border); }
+.links-menu a:last-child { border-bottom:none; }
+.links-menu a:hover { background:var(--surface2); color:var(--text); }
+.links-wrap { position:relative; display:inline-block; }
+.links-wrap.open .links-menu { display:block; }
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>💼 Jobs</h1>
+  <span class="subtitle" id="jobs-subtitle">Loading…</span>
+</div>
+
+<div class="filter-bar">
+  <input type="text" id="job-search" placeholder="Search title, company…" oninput="filterJobs()">
+  <select id="filter-status" onchange="filterJobs()">
+    <option value="">All statuses</option>
+    <option>new</option><option>saved</option><option>applied</option>
+    <option>interviewing</option><option>rejected</option>
+  </select>
+  <select id="filter-company" onchange="filterJobs()">
+    <option value="">All companies</option>
+  </select>
+</div>
+
+<div class="stat-row">
+  <div class="mini-stat"><strong id="cnt-new">–</strong>New</div>
+  <div class="mini-stat"><strong id="cnt-applied">–</strong>Applied</div>
+  <div class="mini-stat"><strong id="cnt-interviewing">–</strong>Interviewing</div>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Company</th><th>Role</th><th>Location</th>
+        <th>Salary</th><th>Found</th><th>Status</th><th>Links</th>
+      </tr>
+    </thead>
+    <tbody id="jobs-body"></tbody>
+  </table>
+  <div class="empty" id="jobs-empty" style="display:none">No matching jobs.</div>
+</div>
+
+<script>
+let allJobs = [];
+
+async function loadJobs() {
+  const res = await fetch('/api/lifestyle/jobs');
+  allJobs = await res.json();
+  document.getElementById('jobs-subtitle').textContent = allJobs.length + ' listings tracked';
+  populateCompanyFilter();
+  updateCounts();
+  filterJobs();
+}
+
+function populateCompanyFilter() {
+  const cos = [...new Set(allJobs.map(j=>j.company))].sort();
+  const sel = document.getElementById('filter-company');
+  sel.innerHTML = '<option value="">All companies</option>';
+  cos.forEach(c => { const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
+}
+
+function updateCounts() {
+  ['new','applied','interviewing'].forEach(s =>
+    document.getElementById('cnt-'+s).textContent = allJobs.filter(j=>j.status===s).length
+  );
+}
+
+function filterJobs() {
+  const q = document.getElementById('job-search').value.toLowerCase();
+  const st = document.getElementById('filter-status').value;
+  const co = document.getElementById('filter-company').value;
+  const f = allJobs.filter(j => {
+    const mq = !q || j.title.toLowerCase().includes(q) || j.company.toLowerCase().includes(q);
+    const ms = !st || j.status === st;
+    const mc = !co || j.company === co;
+    return mq && ms && mc;
+  });
+  renderJobs(f);
+}
+
+function renderJobs(jobs) {
+  const tbody = document.getElementById('jobs-body');
+  tbody.innerHTML = '';
+  document.getElementById('jobs-empty').style.display = jobs.length ? 'none' : 'block';
+  jobs.forEach(j => {
+    const tr = document.createElement('tr');
+    const salCls = (!j.salary || j.salary==='Not listed') ? 'sal none' : 'sal';
+    const links = [
+      {icon:'📋', label:'Job Posting', url: j.url},
+      {icon:'💼', label:'LinkedIn — '+j.company, url:`https://www.linkedin.com/company/${encodeURIComponent(j.company.toLowerCase())}/jobs/`},
+      {icon:'🔍', label:'Glassdoor Reviews', url:`https://www.glassdoor.com/Search/results.htm?keyword=${encodeURIComponent(j.company)}`},
+    ];
+    tr.innerHTML = `
+      <td class="company-cell">${j.company}</td>
+      <td><a class="title-link" href="${j.url}" target="_blank">${j.title}</a></td>
+      <td class="loc">${j.location||'—'}</td>
+      <td class="${salCls}">${j.salary||'—'}</td>
+      <td class="found-date">${j.found_at||'—'}</td>
+      <td><select class="status-sel s-${j.status}" onchange="updateStatus('${j.job_id}',this)">
+        ${['new','saved','applied','interviewing','rejected'].map(s=>
+          `<option value="${s}" ${j.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`
+        ).join('')}
+      </select></td>
+      <td>${linksDropdown(links)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function linksDropdown(links) {
+  const items = links.map(l=>`<a href="${l.url}" target="_blank">${l.icon} ${l.label}</a>`).join('');
+  return `<div class="links-wrap" onclick="toggleMenu(event,this)">
+    <button class="links-btn">Links ▾</button>
+    <div class="links-menu">${items}</div>
+  </div>`;
+}
+function toggleMenu(e,wrap) {
+  e.stopPropagation();
+  document.querySelectorAll('.links-wrap.open').forEach(w=>{ if(w!==wrap) w.classList.remove('open'); });
+  wrap.classList.toggle('open');
+}
+document.addEventListener('click', ()=>document.querySelectorAll('.links-wrap.open').forEach(w=>w.classList.remove('open')));
+
+async function updateStatus(jobId, sel) {
+  sel.className = 'status-sel s-' + sel.value;
+  await fetch(`/api/lifestyle/jobs/${jobId}/status`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({status: sel.value}),
+  });
+  const j = allJobs.find(j=>j.job_id===jobId);
+  if (j) j.status = sel.value;
+  updateCounts();
+}
+
+loadJobs();
+setInterval(loadJobs, 30000);
+</script>
+{% endblock %}

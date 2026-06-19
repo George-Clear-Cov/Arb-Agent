@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Markets{% endblock %}
+
+{% block extra_style %}
+/* ── Sport filter chips ── */
+.filter-bar { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.filter-chip { background:var(--surface); border:1px solid var(--border); border-radius:4px;
+  padding:4px 10px; font-size:11px; cursor:pointer; transition:background .15s,border-color .15s;
+  font-family:inherit; color:var(--muted); }
+.filter-chip.active { border-color:var(--accent); color:var(--text); background:rgba(99,102,241,.12); }
+.filter-chip:hover { color:var(--text); }
+.filter-label { font-size:11px; color:var(--muted); white-space:nowrap; }
+
+/* ── Source breakdown pills ── */
+.source-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px; }
+.source-pill { display:flex; align-items:center; gap:6px; background:var(--surface);
+  border:1px solid var(--border); border-radius:6px; padding:5px 12px; font-size:11px; }
+.source-pill .count { font-weight:700; font-size:14px; }
+
+/* ── Market card grid ── */
+.markets-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:10px; }
+.mkt-card { background:var(--surface); border:1px solid var(--border); border-radius:6px;
+  padding:12px 14px; transition:border-color .15s; }
+.mkt-card:hover { border-color:var(--accent); }
+.mkt-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.mkt-name { font-size:12px; font-weight:600; flex:1; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mkt-type { font-size:10px; color:var(--muted); background:var(--surface2);
+  padding:2px 6px; border-radius:3px; white-space:nowrap; }
+.mkt-outcomes { display:flex; flex-direction:column; gap:4px; }
+.outcome-row { display:flex; justify-content:space-between; align-items:center;
+  font-size:11px; padding:3px 0; border-bottom:1px solid var(--border); }
+.outcome-row:last-child { border-bottom:none; }
+.outcome-name { color:var(--muted); flex:1; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.outcome-price { font-weight:700; font-size:12px; margin-left:8px; }
+.outcome-prob  { font-size:10px; color:var(--muted); margin-left:6px; width:36px; text-align:right; }
+.mkt-footer { margin-top:7px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.mkt-vol { font-size:10px; color:var(--muted); }
+.mkt-time { font-size:10px; color:var(--muted); }
+
+/* ── Empty state ── */
+.empty-state { text-align:center; padding:64px 20px; color:var(--muted); }
+.empty-state h2 { font-size:15px; margin-bottom:8px; }
+.empty-state p  { font-size:12px; }
+
+/* ── Search ── */
+.search-wrap { margin-left:auto; }
+#search-input { background:var(--surface); border:1px solid var(--border); color:var(--text);
+  font-family:inherit; font-size:11px; padding:5px 10px; border-radius:4px; width:200px; }
+#search-input:focus { outline:none; border-color:var(--accent); }
+{% endblock %}
+
+{% set active = 'markets' %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Loaded Markets</h1>
+  <span class="subtitle" id="sub-title">waiting for first cycle…</span>
+</div>
+
+<!-- Source breakdown pills -->
+<div class="source-bar" id="source-bar"></div>
+
+<!-- Sport filter + search -->
+<div class="filter-bar" id="filter-bar">
+  <span class="filter-label">Sport:</span>
+  <button class="filter-chip active" data-sport="all">All</button>
+  <div class="search-wrap">
+    <input id="search-input" type="text" placeholder="Search event…" oninput="_render()">
+  </div>
+</div>
+
+<!-- Cards -->
+<div class="markets-grid" id="markets-grid">
+  <div class="empty-state" style="grid-column:1/-1">
+    <h2>Waiting for data…</h2>
+    <p>Markets will appear once the first fetch cycle completes.</p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_script %}
+<script>
+let _allMarkets = [];
+let _sportFilter = 'all';
+
+// Listen for state updates pushed over WebSocket
+window.addEventListener('arbstate', e => {
+  const d = e.detail;
+  const counts = d.market_counts || {};
+  const sports  = d.sport_counts  || {};
+  const total   = d.total_markets || 0;
+
+  document.getElementById('sub-title').textContent =
+    `${total} markets across ${Object.keys(counts).length} sources`;
+
+  // Rebuild source pills
+  const bar = document.getElementById('source-bar');
+  bar.innerHTML = Object.entries(counts)
+    .sort((a,b) => b[1]-a[1])
+    .map(([src, n]) =>
+      `<div class="source-pill">
+        <span class="source-tag source-${src}">${src}</span>
+        <span class="count">${n}</span>
+      </div>`
+    ).join('');
+
+  // Sync sport chips (keep existing, add new)
+  const fb = document.getElementById('filter-bar');
+  const existingSports = new Set([...fb.querySelectorAll('.filter-chip')].map(c => c.dataset.sport));
+  Object.keys(sports).sort().forEach(s => {
+    if (!existingSports.has(s)) {
+      const chip = document.createElement('button');
+      chip.className = 'filter-chip';
+      chip.dataset.sport = s;
+      chip.textContent = `${s} (${sports[s]})`;
+      fb.insertBefore(chip, fb.querySelector('.search-wrap'));
+    } else {
+      // Update count on existing chip
+      const chip = fb.querySelector(`.filter-chip[data-sport="${s}"]`);
+      if (chip && chip.dataset.sport !== 'all') chip.textContent = `${s} (${sports[s]})`;
+    }
+  });
+});
+
+// Sport filter clicks
+document.getElementById('filter-bar').addEventListener('click', e => {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip || !chip.dataset.sport) return;
+  _sportFilter = chip.dataset.sport;
+  document.querySelectorAll('#filter-bar .filter-chip').forEach(c =>
+    c.classList.toggle('active', c === chip));
+  _render();
+});
+
+// Fetch and render on page load, then re-poll every 10s
+async function _loadMarkets() {
+  try {
+    const r = await fetch('/api/markets/all');
+    const j = await r.json();
+    _allMarkets = j.markets || [];
+    _render();
+  } catch(e) {}
+}
+
+function _render() {
+  const q = (document.getElementById('search-input').value || '').toLowerCase();
+  const filtered = _allMarkets.filter(m =>
+    (_sportFilter === 'all' || m.sport === _sportFilter) &&
+    (!q || m.event_name.toLowerCase().includes(q))
+  );
+
+  const grid = document.getElementById('markets-grid');
+  if (!filtered.length) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <h2>No markets match</h2>
+      <p>${_allMarkets.length === 0
+        ? 'Waiting for first fetch cycle…'
+        : `${_allMarkets.length} markets loaded but none match the current filter.`}</p>
+    </div>`;
+    return;
+  }
+
+  // Sort: sports first, then prediction; within each group by event name
+  const sorted = [...filtered].sort((a,b) => {
+    if (a.sport !== b.sport) return a.sport.localeCompare(b.sport);
+    return a.event_name.localeCompare(b.event_name);
+  });
+
+  grid.innerHTML = sorted.map(m => {
+    const outcomes = (m.outcomes || []).slice(0, 6); // cap at 6 outcomes per card
+    const vol = m.total_volume ? `💧 $${_fmtVol(m.total_volume)}` : '';
+    const time = m.commence_time
+      ? `⏱ ${new Date(m.commence_time).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`
+      : '';
+
+    return `<div class="mkt-card">
+      <div class="mkt-header">
+        <span class="source-tag source-${m.source}">${m.source}</span>
+        <span class="mkt-name" title="${m.event_name}">${m.event_name}</span>
+        <span class="mkt-type">${m.market_type}</span>
+      </div>
+      <div class="mkt-outcomes">
+        ${outcomes.map(o => `
+          <div class="outcome-row">
+            <span class="outcome-name" title="${o.name}">${o.name}</span>
+            <span class="outcome-price">${o.price.toFixed(3)}</span>
+            <span class="outcome-prob">${(o.implied_prob*100).toFixed(1)}%</span>
+          </div>`).join('')}
+      </div>
+      ${(vol || time) ? `<div class="mkt-footer">
+        ${vol ? `<span class="mkt-vol">${vol}</span>` : ''}
+        ${time ? `<span class="mkt-time">${time}</span>` : ''}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function _fmtVol(v) {
+  if (v >= 1_000_000) return (v/1_000_000).toFixed(1)+'M';
+  if (v >= 1_000)     return (v/1_000).toFixed(0)+'K';
+  return v.toFixed(0);
+}
+
+// Initial load + periodic refresh
+_loadMarkets();
+setInterval(_loadMarkets, 10_000);
+</script>
+{% endblock %}

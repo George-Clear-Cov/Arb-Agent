@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "arb-agent-live",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["/Users/georgenagib/arbitrage-agent/run_live.sh"],
+      "port": 8000
+    }
+  ]
+}

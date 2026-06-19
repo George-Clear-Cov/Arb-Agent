@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Arb Agent{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Backgrounds */
+      --bg:       #f5f6fa;
+      --surface:  #ffffff;
+      --surface2: #f0f1f7;
+      --surface3: #e8eaf2;
+      /* Borders */
+      --border:   #e2e4ee;
+      --border2:  #d0d3e4;
+      /* Text */
+      --text:     #1c1e2e;
+      --text2:    #5a5f7a;
+      --muted:    #9299b8;
+      /* Accents */
+      --accent:   #5b63e8;
+      --accent2:  #3d44c4;
+      /* Signal colors */
+      --green:    #18a96a;
+      --green-bg: rgba(24,169,106,.09);
+      --red:      #e0434b;
+      --red-bg:   rgba(224,67,75,.09);
+      --yellow:   #d48d0a;
+      --yellow-bg:rgba(212,141,10,.09);
+      --blue:     #3b80e8;
+      --blue-bg:  rgba(59,128,232,.09);
+      --orange:   #e8620a;
+      --purple:   #7c5ce0;
+      /* Fonts */
+      --font-ui:  'Inter', system-ui, -apple-system, sans-serif;
+      --font-num: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      /* Spacing */
+      --radius:   6px;
+      --radius-sm:4px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+    /* ── Nav ── */
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      height: 48px;
+      gap: 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      font-family: var(--font-num);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 14px;
+      margin-right: 28px;
+      letter-spacing: -0.5px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .logo::before {
+      content: '';
+      display: block;
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 2px;
+      transform: rotate(45deg);
+    }
+    nav a {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0 12px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      border-bottom: 2px solid transparent;
+      transition: color .12s, border-color .12s;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: .3px;
+      white-space: nowrap;
+    }
+    nav a:hover { color: var(--text2); }
+    nav a.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    /* ── Nav ticker ── */
+    .ticker {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 11px;
+    }
+    .ticker-item {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0;
+    }
+    .ticker-label {
+      color: var(--muted);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      font-weight: 600;
+    }
+    .ticker-val {
+      font-family: var(--font-num);
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .ticker-val.green { color: var(--green); }
+    .ticker-val.red   { color: var(--red);   }
+    .ws-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background .3s;
+      flex-shrink: 0;
+    }
+    .ws-dot.live { background: var(--green); box-shadow: 0 0 4px var(--green); }
+    .ws-dot.dead { background: var(--red); }
+    .kill-btn {
+      background: transparent;
+      border: 1px solid var(--border2);
+      color: var(--text2);
+      padding: 4px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-family: var(--font-ui);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .4px;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .kill-btn:hover { background: var(--surface3); color: var(--text); border-color: var(--border2); }
+    .kill-btn.active {
+      background: var(--red-bg);
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      font-size: 10px;
+      font-weight: 600;
+      margin-left: 6px;
+    }
+    .badge.green  { background: var(--green-bg);  color: var(--green);  }
+    .badge.yellow { background: var(--yellow-bg); color: var(--yellow); }
+    .badge.blue   { background: var(--blue-bg);   color: var(--blue);   }
+    .badge.red    { background: var(--red-bg);    color: var(--red);    }
+    .badge.purple { background: rgba(167,139,250,.12); color: var(--purple); }
+
+    /* ── Layout ── */
+    .container { padding: 24px; max-width: 1480px; margin: 0 auto; }
+    .page-header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .page-header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -.3px;
+    }
+    .page-header .subtitle { color: var(--text2); font-size: 11px; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .card-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface2);
+    }
+    .card-header h3 {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--text2);
+    }
+
+    /* ── Stat cards ── */
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+    }
+    .stat-card .label {
+      color: var(--muted);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .stat-card .value {
+      font-family: var(--font-num);
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .stat-card .value.green  { color: var(--green); }
+    .stat-card .value.red    { color: var(--red); }
+    .stat-card .value.yellow { color: var(--yellow); }
+
+    /* ── Tables ── */
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: var(--surface2);
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      padding: 8px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      transition: color .1s;
+    }
+    thead th:hover { color: var(--text2); }
+    thead th.sorted-asc::after  { content: " ▲"; font-size: 8px; }
+    thead th.sorted-desc::after { content: " ▼"; font-size: 8px; }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .08s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(0,0,0,.025); }
+    td { padding: 9px 14px; vertical-align: middle; }
+
+    /* ── Source tags ── */
+    .source-tag {
+      font-family: var(--font-num);
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      letter-spacing: .3px;
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+    .source-odds_api  { background: var(--blue-bg);              color: var(--blue);   }
+    .source-betfair   { background: rgba(249,115,22,.12);        color: var(--orange); }
+    .source-kalshi    { background: rgba(124,131,245,.12);       color: var(--accent); }
+    .source-polymarket{ background: var(--green-bg);             color: var(--green);  }
+    .source-predictit { background: var(--yellow-bg);            color: var(--yellow); }
+    .source-prophetx  { background: rgba(167,139,250,.12);       color: var(--purple); }
+    .source-opinion   { background: var(--red-bg);               color: var(--red);    }
+    .source-predictfun{ background: rgba(62,207,142,.08);        color: #34d399;       }
+
+    /* ── Misc ── */
+    .empty { text-align: center; padding: 56px; color: var(--muted); font-size: 12px; }
+    .ts    { color: var(--text2); font-size: 11px; }
+    .price { font-family: var(--font-num); font-weight: 600; }
+    .price.good { color: var(--green); }
+
+    /* ── Toast (bottom-right, replaces top ribbon) ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--surface3);
+      border: 1px solid var(--border2);
+      border-left: 3px solid var(--green);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 500;
+      max-width: 340px;
+      transform: translateY(16px);
+      opacity: 0;
+      transition: opacity .2s, transform .2s;
+      z-index: 200;
+      pointer-events: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    {% block extra_style %}{% endblock %}
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">Alfred</span>
+  <a href="/arb"     {% if active=='arb'     %}class="active"{% endif %}>🎯 Arbs</a>
+  <a href="/flights" {% if active=='flights' %}class="active"{% endif %}>✈️ Flights</a>
+  <a href="/jobs"    {% if active=='jobs'    %}class="active"{% endif %}>💼 Jobs</a>
+  <a href="/portfolio"          {% if active=='portfolio'   %}class="active"{% endif %} style="margin-left:16px;padding-left:16px;border-left:1px solid var(--border)">Portfolio</a>
+  <a href="/debug"              {% if active=='debug'       %}class="active"{% endif %}>Feeds</a>
+
+  <div class="ticker">
+    <div class="ticker-item">
+      <span class="ticker-label">Markets</span>
+      <span class="ticker-val" id="t-markets">—</span>
+    </div>
+    <div class="ticker-item">
+      <span class="ticker-label">Balance</span>
+      <span class="ticker-val" id="t-balance">—</span>
+    </div>
+    <div class="ticker-item">
+      <span class="ticker-label">P&amp;L</span>
+      <span class="ticker-val" id="t-pnl">—</span>
+    </div>
+    <div class="ticker-item">
+      <span class="ticker-label">Arbs</span>
+      <span class="ticker-val" id="t-arbs">—</span>
+    </div>
+    <div class="ticker-item">
+      <span class="ticker-label">Best</span>
+      <span class="ticker-val green" id="t-best">—</span>
+    </div>
+    <button class="kill-btn" id="kill-btn" title="Pause / resume all trading">■ STOP</button>
+    <div class="ws-dot" id="ws-dot" title="WebSocket"></div>
+  </div>
+</nav>
+
+<div id="toast"></div>
+
+<div class="container">
+  {% block content %}{% endblock %}
+</div>
+
+<script>
+// ── WebSocket client ───────────────────────────────────────────────────────
+const dot     = document.getElementById('ws-dot');
+const killBtn = document.getElementById('kill-btn');
+let _prevArbCount   = 0;
+let _prevBestMargin = 0;
+let _killActive     = false;
+let _ws = null;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _ws = new WebSocket(`${proto}://${location.host}/ws`);
+  _ws.onopen  = () => { dot.className = 'ws-dot live'; };
+  _ws.onclose = () => { dot.className = 'ws-dot dead'; setTimeout(connectWS, 4000); };
+  _ws.onerror = () => _ws.close();
+  _ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'kill_switch') {
+      _killActive = d.active;
+      _updateKillBtn();
+      return;
+    }
+    _applyState(d);
+  };
+}
+
+function _applyState(d) {
+  const s    = d.stats  || {};
+  const arbs = d.arbs   || [];
+
+  if (d.total_markets != null)
+    document.getElementById('t-markets').textContent = d.total_markets;
+
+  if (s.balance != null)
+    document.getElementById('t-balance').textContent = '$' + s.balance.toFixed(2);
+
+  if (s.total_pnl != null) {
+    const el = document.getElementById('t-pnl');
+    el.textContent  = (s.total_pnl >= 0 ? '+' : '') + '$' + s.total_pnl.toFixed(2);
+    el.className    = 'ticker-val ' + (s.total_pnl >= 0 ? 'green' : 'red');
+  }
+
+  document.getElementById('t-arbs').textContent = arbs.length;
+  const best = arbs.length ? Math.max(...arbs.map(a => a.margin_pct)) : 0;
+  document.getElementById('t-best').textContent = best ? best.toFixed(2) + '%' : '—';
+
+  _killActive = d.kill_switch;
+  _updateKillBtn();
+
+  // Toast for new/improved arbs
+  if (arbs.length > _prevArbCount || best > _prevBestMargin + 0.5) {
+    if (arbs.length > 0) {
+      _playTone(best >= 3 ? 660 : 440);
+      _toast(`${best.toFixed(2)}% arb — ${arbs[0].event_name}`);
+    }
+  }
+  _prevArbCount   = arbs.length;
+  _prevBestMargin = best;
+
+  window.dispatchEvent(new CustomEvent('arbstate', { detail: d }));
+}
+
+// ── Kill switch ────────────────────────────────────────────────────────────
+function _updateKillBtn() {
+  killBtn.textContent = _killActive ? '▶ RESUME' : '■ STOP';
+  killBtn.className   = 'kill-btn' + (_killActive ? ' active' : '');
+}
+killBtn.addEventListener('click', async () => {
+  const r = await fetch('/api/kill-switch', { method: 'POST' });
+  const j = await r.json();
+  _killActive = j.kill_switch;
+  _updateKillBtn();
+});
+
+// ── Toast notification ─────────────────────────────────────────────────────
+const _toastEl = document.getElementById('toast');
+let _toastTimer = null;
+function _toast(msg) {
+  _toastEl.textContent = msg;
+  _toastEl.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => _toastEl.classList.remove('show'), 4000);
+}
+// expose for page scripts that used _flash before
+window._flash = _toast;
+
+// ── Web Audio ──────────────────────────────────────────────────────────────
+let _audioCtx = null;
+function _playTone(freq = 440) {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = _audioCtx.createOscillator();
+    const gain = _audioCtx.createGain();
+    osc.connect(gain); gain.connect(_audioCtx.destination);
+    osc.frequency.value = freq; osc.type = 'sine';
+    gain.gain.setValueAtTime(0.15, _audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + 0.35);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.35);
+  } catch(e) {}
+}
+
+// ── Browser notification ───────────────────────────────────────────────────
+if ('Notification' in window && Notification.permission === 'default')
+  Notification.requestPermission();
+
+// ── Column sorting utility ─────────────────────────────────────────────────
+window.makeTableSortable = function(tableId) {
+  const tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  let sortCol = null, sortAsc = false;
+  tbl.querySelectorAll('thead th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      sortAsc  = sortCol === th.dataset.sort ? !sortAsc : true;
+      sortCol  = th.dataset.sort;
+      tbl.querySelectorAll('thead th').forEach(h =>
+        h.classList.remove('sorted-asc', 'sorted-desc'));
+      th.classList.add(sortAsc ? 'sorted-asc' : 'sorted-desc');
+      const rows = [...tbl.querySelectorAll('tbody tr.data-row')];
+      rows.sort((a, b) => {
+        const av = parseFloat(a.dataset[sortCol] ?? a.textContent);
+        const bv = parseFloat(b.dataset[sortCol] ?? b.textContent);
+        return sortAsc ? av - bv : bv - av;
+      });
+      rows.forEach(r => tbl.querySelector('tbody').appendChild(r));
+    });
+  });
+};
+
+connectWS();
+</script>
+{% block extra_script %}{% endblock %}
+</body>
+</html>

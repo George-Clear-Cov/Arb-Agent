@@ -1,0 +1,489 @@
+{% extends "base.html" %}
+{% set active = "sportsbooks" %}
+{% block title %}Sportsbooks{% endblock %}
+
+{% block extra_style %}
+/* ── Filter bar ── */
+.filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-chip {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  padding: 4px 10px; font-size: 11px; cursor: pointer;
+  transition: background .15s, border-color .15s;
+  font-family: inherit; color: var(--muted);
+}
+.filter-chip.active { border-color: var(--accent); color: var(--text); background: rgba(124,131,245,.12); }
+.filter-chip:hover { color: var(--text); }
+
+/* ── Source pills ── */
+.source-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.source-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 12px; font-size: 11px;
+}
+.source-pill .pill-count { font-weight: 700; font-size: 14px; font-family: var(--font-num); }
+
+/* ── Odds table layout ── */
+.odds-table-wrap { overflow-x: auto; margin-bottom: 24px; }
+.odds-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 11px; white-space: nowrap;
+}
+.odds-table thead th {
+  text-align: left; padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted); font-weight: 600;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  background: var(--surface);
+  position: sticky; top: 48px; z-index: 2;
+}
+.odds-table tbody tr { border-bottom: 1px solid var(--border); }
+.odds-table tbody tr:hover td { background: rgba(0,0,0,.025); }
+.odds-table td { padding: 7px 10px; vertical-align: middle; }
+.event-name { font-weight: 600; color: var(--text); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.market-type-badge {
+  display: inline-block; font-size: 9px; font-weight: 600;
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--surface2); color: var(--muted);
+  margin-left: 5px; vertical-align: middle;
+}
+.sport-badge {
+  font-size: 9px; color: var(--muted);
+}
+.outcomes-cell { display: flex; flex-direction: column; gap: 2px; }
+.outcome-line { display: flex; align-items: center; gap: 8px; }
+.oc-name { color: var(--muted); min-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+.oc-price { font-family: var(--font-num); font-weight: 700; font-size: 12px; min-width: 44px; text-align: right; }
+.oc-prob  { font-family: var(--font-num); font-size: 10px; color: var(--muted); min-width: 36px; text-align: right; }
+.oc-book  { font-size: 9px; color: var(--text3); background: var(--surface2); padding: 1px 4px; border-radius: 2px; }
+
+.time-cell { font-family: var(--font-num); font-size: 10px; color: var(--muted); }
+.source-cell { text-align: center; }
+
+/* ── Section header ── */
+.sport-section { margin-bottom: 28px; }
+.sport-section-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.sport-section-header h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; margin: 0; }
+.sport-count { font-size: 11px; color: var(--muted); font-family: var(--font-num); }
+
+/* ── Empty state ── */
+.empty-state { text-align: center; padding: 64px 20px; color: var(--muted); }
+.empty-state h2 { font-size: 15px; margin-bottom: 8px; }
+.empty-state p  { font-size: 12px; }
+
+/* ── Arb table ── */
+.margin-wrap { display:flex; flex-direction:column; gap:1px; }
+.margin-net  { font-family:var(--font-num); font-weight:700; font-size:13px; color:var(--green); }
+.margin-gross{ font-family:var(--font-num); font-size:10px; color:var(--muted); }
+.margin-bar  { height:3px; border-radius:2px; background:var(--green); opacity:.7; margin-top:3px; }
+.age { font-family:var(--font-num); font-size:10px; }
+.age.stale { color:var(--red); }
+.age.fresh { color:var(--muted); }
+.legs-row td { background:rgba(0,0,0,.3); padding:0; }
+.expand-inner { padding:12px 16px 14px 36px; }
+.expand-desc { margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+.expand-event { font-size:13px; font-weight:600; line-height:1.4; margin-bottom:4px; }
+.leg-line { display:flex; gap:8px; align-items:center; padding:6px 0;
+  border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.leg-line:last-child { border-bottom:none; }
+.leg-outcome { flex:1; min-width:0; font-size:12px; font-weight:500; }
+.leg-right { display:flex; align-items:center; gap:10px; margin-left:auto; flex-shrink:0; }
+.leg-price-wrap { display:flex; flex-direction:column; align-items:flex-end; gap:1px; }
+.leg-raw  { font-family:var(--font-num); font-size:10px; color:var(--muted); text-decoration:line-through; }
+.leg-eff  { font-family:var(--font-num); font-weight:700; font-size:13px; }
+.leg-view-link { color:var(--accent); font-size:10px; text-decoration:none; white-space:nowrap; }
+.leg-view-link:hover { text-decoration:underline; }
+.toggle-btn { background:none; border:none; color:var(--muted); cursor:pointer; font-size:10px; padding:0 4px; }
+.filter-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+
+/* ── Search ── */
+.search-wrap { margin-left: auto; }
+#search-input {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  font-family: inherit; font-size: 11px; padding: 5px 10px;
+  border-radius: 4px; width: 200px;
+}
+#search-input:focus { outline: none; border-color: var(--accent); }
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Sportsbooks</h1>
+  <span class="subtitle" id="sub-title">waiting for first cycle…</span>
+</div>
+
+<!-- ── Arb Opportunities ─────────────────────────────────────────────────── -->
+<div class="card" id="arb-card" style="margin-bottom:28px">
+  <div class="card-header">
+    <h3>Cross-Bookmaker Arbs <span id="arb-count-badge" class="badge green">0</span></h3>
+    <span class="ts" id="arb-updated">—</span>
+  </div>
+
+  <div class="filter-bar" id="arb-filter-bar" style="padding:0 4px 8px">
+    <span style="font-size:11px;color:var(--muted);white-space:nowrap">Sport:</span>
+    <button class="filter-chip active" data-sport="all">All</button>
+    <div class="min-margin-wrap" style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+      Min margin: <strong id="arb-margin-label">0%</strong>
+      <input type="range" id="arb-margin-slider" min="0" max="5" step="0.25" value="0" style="width:90px;accent-color:var(--accent)">
+    </div>
+  </div>
+
+  <table id="arb-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Event</th>
+        <th data-sort="sport">Sport</th>
+        <th>Type</th>
+        <th data-sort="margin_pct" class="sorted-desc">Net margin ▼</th>
+        <th data-sort="gross_margin_pct">Gross</th>
+        <th data-sort="total_stake">Stake</th>
+        <th data-sort="profit">Profit</th>
+        <th>Books</th>
+        <th data-sort="age_s">Age</th>
+      </tr>
+    </thead>
+    <tbody id="arb-tbody">
+      <tr><td colspan="10" class="empty">Waiting for first detection cycle…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Market browser ──────────────────────────────────────────────────────── -->
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">
+  <h2 style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin:0">All Sportsbook Markets</h2>
+</div>
+
+<div class="source-bar" id="source-bar"></div>
+
+<div class="filter-bar" id="filter-bar">
+  <span style="font-size:11px;color:var(--muted);white-space:nowrap;">Sport:</span>
+  <button class="filter-chip active" data-sport="all">All</button>
+  <div class="search-wrap">
+    <input id="search-input" type="text" placeholder="Search event…" oninput="_render()">
+  </div>
+</div>
+
+<div id="content">
+  <div class="empty-state">
+    <h2>Waiting for data…</h2>
+    <p>Sportsbook markets will appear once the Odds API feed delivers data.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_script %}
+<script>
+const SB_SOURCES = new Set(['odds_api','betfair','espn_dk','kalshi_sports']);
+let _all = [];
+let _sportFilter = 'all';
+
+// ── Arb table state ──────────────────────────────────────────────────────────
+let _arbs = [];
+let _arbSportFilter = 'all';
+let _expandedIds = new Set();
+
+makeTableSortable('arb-table');
+
+const arbSlider = document.getElementById('arb-margin-slider');
+const arbSliderLabel = document.getElementById('arb-margin-label');
+arbSlider.addEventListener('input', () => {
+  arbSliderLabel.textContent = arbSlider.value + '%';
+  _renderArbs();
+});
+
+document.getElementById('arb-filter-bar').addEventListener('click', e => {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip || !chip.dataset.sport) return;
+  _arbSportFilter = chip.dataset.sport;
+  document.querySelectorAll('#arb-filter-bar .filter-chip').forEach(c =>
+    c.classList.toggle('active', c === chip));
+  _renderArbs();
+});
+
+window.addEventListener('arbstate', e => {
+  const d = e.detail;
+  const counts = d.market_counts || {};
+
+  // ── Market count pills ──────────────────────────────────────────────────
+  const sbCounts = Object.fromEntries(
+    Object.entries(counts).filter(([s]) => SB_SOURCES.has(s))
+  );
+  const total = Object.values(sbCounts).reduce((a,b) => a+b, 0);
+  document.getElementById('sub-title').textContent =
+    `${total} markets · ${Object.keys(sbCounts).length} sources`;
+
+  document.getElementById('source-bar').innerHTML =
+    Object.entries(sbCounts)
+      .sort((a,b) => b[1]-a[1])
+      .map(([src, n]) =>
+        `<div class="source-pill">
+          <span class="source-tag source-${src}">${src}</span>
+          <span class="pill-count">${n}</span>
+        </div>`
+      ).join('');
+
+  // ── Sportsbook arbs from WebSocket payload ──────────────────────────────
+  _arbs = (d.arbs || []).filter(a =>
+    a.sources && a.sources.length > 0 && a.sources.every(s => SB_SOURCES.has(s))
+  );
+
+  // Sync sport chips
+  const sports = [...new Set(_arbs.map(a => a.sport))];
+  const fb = document.getElementById('arb-filter-bar');
+  const existing = new Set([...fb.querySelectorAll('.filter-chip')].map(c => c.dataset.sport));
+  sports.forEach(s => {
+    if (!existing.has(s)) {
+      const chip = document.createElement('button');
+      chip.className = 'filter-chip'; chip.dataset.sport = s; chip.textContent = s;
+      fb.insertBefore(chip, fb.querySelector('.min-margin-wrap'));
+    }
+  });
+
+  document.getElementById('arb-count-badge').textContent = _arbs.length;
+  document.getElementById('arb-updated').textContent =
+    d.last_updated ? 'Updated ' + new Date(d.last_updated + 'Z').toLocaleTimeString() : '—';
+
+  _renderArbs();
+});
+
+document.getElementById('filter-bar').addEventListener('click', e => {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip) return;
+  _sportFilter = chip.dataset.sport;
+  document.querySelectorAll('#filter-bar .filter-chip').forEach(c =>
+    c.classList.toggle('active', c === chip));
+  _render();
+});
+
+async function _load() {
+  try {
+    const j = await fetch('/api/markets/sportsbooks').then(r => r.json());
+    _all = j.markets || [];
+
+    // Build sport chips from data
+    const sports = {};
+    _all.forEach(m => { sports[m.sport] = (sports[m.sport] || 0) + 1; });
+    const fb = document.getElementById('filter-bar');
+    const existing = new Set([...fb.querySelectorAll('.filter-chip')].map(c => c.dataset.sport));
+    Object.entries(sports).sort().forEach(([s, n]) => {
+      if (!existing.has(s)) {
+        const chip = document.createElement('button');
+        chip.className = 'filter-chip';
+        chip.dataset.sport = s;
+        chip.textContent = `${s} (${n})`;
+        fb.insertBefore(chip, fb.querySelector('.search-wrap'));
+      } else {
+        const c = fb.querySelector(`.filter-chip[data-sport="${s}"]`);
+        if (c && c.dataset.sport !== 'all') c.textContent = `${s} (${n})`;
+      }
+    });
+
+    _render();
+  } catch(e) {}
+}
+
+function _render() {
+  const q = (document.getElementById('search-input').value || '').toLowerCase();
+  const filtered = _all.filter(m =>
+    (_sportFilter === 'all' || m.sport === _sportFilter) &&
+    (!q || m.event_name.toLowerCase().includes(q))
+  );
+
+  const div = document.getElementById('content');
+  if (!filtered.length) {
+    div.innerHTML = `<div class="empty-state">
+      <h2>No markets match</h2>
+      <p>${_all.length === 0
+        ? 'Waiting for first cycle — check the Feeds page if this persists.'
+        : `${_all.length} loaded — none match the current filter.`}</p>
+    </div>`;
+    return;
+  }
+
+  // Group by sport
+  const bySport = {};
+  filtered.forEach(m => {
+    (bySport[m.sport] = bySport[m.sport] || []).push(m);
+  });
+
+  // Sort sports by market count descending
+  const sportOrder = Object.entries(bySport).sort((a,b) => b[1].length - a[1].length);
+
+  div.innerHTML = sportOrder.map(([sport, markets]) => {
+    // Within each sport, sort by commence_time then event_name
+    const sorted = [...markets].sort((a,b) => {
+      const ta = a.commence_time ? new Date(a.commence_time).getTime() : 9e15;
+      const tb = b.commence_time ? new Date(b.commence_time).getTime() : 9e15;
+      return ta !== tb ? ta - tb : a.event_name.localeCompare(b.event_name);
+    });
+
+    const rows = sorted.map(m => {
+      const outcomes = (m.outcomes || []).slice(0, 4);
+      const timeStr = m.commence_time
+        ? new Date(m.commence_time).toLocaleString(undefined, {
+            month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+          })
+        : '—';
+      const outHtml = outcomes.map(o =>
+        `<div class="outcome-line">
+          <span class="oc-name">${_esc(o.name)}</span>
+          <span class="oc-price">${o.price.toFixed(2)}</span>
+          <span class="oc-prob">${(o.implied_prob*100).toFixed(1)}%</span>
+          ${o.bookmaker ? `<span class="oc-book">${_esc(o.bookmaker)}</span>` : ''}
+        </div>`
+      ).join('');
+
+      return `<tr>
+        <td>
+          <div class="event-name" title="${_esc(m.event_name)}">${_esc(m.event_name)}</div>
+          <span class="market-type-badge">${m.market_type}</span>
+        </td>
+        <td><div class="outcomes-cell">${outHtml}</div></td>
+        <td class="time-cell">${timeStr}</td>
+        <td class="source-cell"><span class="source-tag source-${m.source}">${m.source}</span></td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="sport-section">
+      <div class="sport-section-header">
+        <h2>${sport}</h2>
+        <span class="sport-count">${markets.length} markets</span>
+      </div>
+      <div class="odds-table-wrap">
+        <table class="odds-table">
+          <thead><tr>
+            <th>Event</th>
+            <th>Outcomes</th>
+            <th>Starts</th>
+            <th>Source</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Arb rendering ────────────────────────────────────────────────────────────
+function _renderArbs() {
+  const minM = parseFloat(arbSlider.value);
+  const filtered = _arbs.filter(a =>
+    (_arbSportFilter === 'all' || a.sport === _arbSportFilter) &&
+    a.margin_pct >= minM
+  );
+
+  const tbody = document.getElementById('arb-tbody');
+  if (!filtered.length) {
+    const msg = _arbs.length === 0
+      ? 'No cross-bookmaker arbs detected yet — check back after a full cycle.'
+      : `${_arbs.length} total — none match current filters.`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty">${msg}</td></tr>`;
+    return;
+  }
+
+  const now = Date.now();
+  tbody.innerHTML = filtered.map(a => {
+    const detectedMs = new Date(a.detected_at + 'Z').getTime();
+    const ageS = Math.round((now - detectedMs) / 1000);
+    const hue = Math.min(a.margin_pct / 5, 1);
+    const bg = `rgba(62,207,142,${(hue * 0.18).toFixed(2)})`;
+
+    // Unique bookmaker names from legs
+    const books = [...new Set(a.legs.map(l => l.bookmaker || l.source))];
+
+    return `
+    <tr class="arb-row data-row"
+        data-id="${a.id}"
+        data-sport="${a.sport}"
+        data-margin_pct="${a.margin_pct}"
+        data-gross_margin_pct="${a.gross_margin_pct}"
+        data-total_stake="${a.total_stake}"
+        data-profit="${a.profit}"
+        data-age_s="${ageS}"
+        style="background:${bg};cursor:pointer"
+        onclick="_toggleLegs('${a.id}')">
+      <td><button class="toggle-btn" id="btn-${a.id}">${_expandedIds.has(a.id)?'▼':'▶'}</button></td>
+      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(a.event_name)}">${_esc(a.event_name)}</td>
+      <td><span class="badge blue">${a.sport}</span></td>
+      <td class="ts">${a.market_type}</td>
+      <td>
+        <div class="margin-wrap">
+          <span class="margin-net">${a.margin_pct.toFixed(2)}%</span>
+          <div class="margin-bar" style="width:${Math.min(a.margin_pct*20,100)}px"></div>
+        </div>
+      </td>
+      <td><span class="margin-gross">${a.gross_margin_pct.toFixed(2)}%</span></td>
+      <td>$${a.total_stake.toFixed(2)}</td>
+      <td class="price good">$${a.profit.toFixed(2)}</td>
+      <td style="font-size:10px;color:var(--muted)">${books.map(b=>`<span class="oc-book">${_esc(b)}</span>`).join(' ')}</td>
+      <td><span class="age ${ageS>60?'stale':'fresh'}" data-detected="${a.detected_at}">${_fmtAge(ageS)}</span></td>
+    </tr>
+    <tr class="legs-row" id="legs-${a.id}" style="display:${_expandedIds.has(a.id)?'table-row':'none'}">
+      <td colspan="10">
+        <div class="expand-inner">
+          <div class="expand-desc">
+            <div class="expand-event">${_esc(a.event_name)}</div>
+            <div class="expand-meta" style="font-size:11px;color:var(--text2);margin-top:4px">
+              ${a.market_type} &nbsp;·&nbsp; ${a.sport}
+              ${a.earliest_expiry ? ' &nbsp;·&nbsp; Starts ' + new Date(a.earliest_expiry).toLocaleDateString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''}
+            </div>
+          </div>
+          ${a.legs.map((l,i) => `
+          <div class="leg-line">
+            <span class="ts">${_esc(l.bookmaker || l.source)}</span>
+            <span class="leg-outcome"><strong>${_esc(l.outcome)}</strong></span>
+            <div class="leg-right">
+              <span class="ts">${l.side}</span>
+              <div class="leg-price-wrap">
+                ${l.price !== l.effective_price ? `<span class="leg-raw">${l.price.toFixed(3)}</span>` : ''}
+                <span class="leg-eff">${l.effective_price.toFixed(3)}</span>
+              </div>
+              <span style="color:var(--muted);font-size:11px">stake</span>
+              <span class="price good">$${l.stake.toFixed(2)}</span>
+              ${l.market_url ? `<a class="leg-view-link" href="${l.market_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View →</a>` : ''}
+            </div>
+          </div>`).join('')}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function _toggleLegs(id) {
+  const row = document.getElementById('legs-' + id);
+  const btn = document.getElementById('btn-' + id);
+  if (!row) return;
+  const hidden = row.style.display === 'none';
+  row.style.display = hidden ? 'table-row' : 'none';
+  btn.textContent = hidden ? '▼' : '▶';
+  if (hidden) _expandedIds.add(id); else _expandedIds.delete(id);
+}
+
+function _fmtAge(s) {
+  if (s < 60) return s + 's';
+  return Math.floor(s/60) + 'm ' + (s%60) + 's';
+}
+
+setInterval(() => {
+  document.querySelectorAll('.age[data-detected]').forEach(el => {
+    const s = Math.round((Date.now() - new Date(el.dataset.detected+'Z').getTime())/1000);
+    el.textContent = _fmtAge(s);
+    el.className = 'age ' + (s > 60 ? 'stale' : 'fresh');
+    const row = el.closest('tr');
+    if (row) row.dataset.age_s = s;
+  });
+}, 1000);
+
+_load();
+setInterval(_load, 15_000);
+</script>
+{% endblock %}

@@ -1,0 +1,27 @@
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# State / DB
+state/
+*.db
+*.sqlite
+*.lock
+logs/
+
+# Brain (grows at runtime — not source-controlled)
+brain/
+
+# Diag / scratch scripts
+diag*.py
+run_demo.sh
+run_live.sh
+
+# Docker / deploy artifacts
+fly.toml

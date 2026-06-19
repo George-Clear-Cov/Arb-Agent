@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Odds API Dashboard{% endblock %}
+{% block extra_style %}
+.bookmaker-section { margin-bottom: 24px; }
+.bookmaker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; padding: 16px; }
+.market-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.market-card .event { font-weight: 600; font-size: 12px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.market-card .meta { color: var(--muted); font-size: 10px; margin-bottom: 10px; }
+.outcomes { display: flex; gap: 6px; flex-wrap: wrap; }
+.outcome-chip { flex: 1; min-width: 80px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; text-align: center; }
+.outcome-chip .oname { font-size: 10px; color: var(--muted); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.outcome-chip .oprice { font-size: 14px; font-weight: 700; color: var(--text); }
+.outcome-chip .oprob { font-size: 9px; color: var(--muted); }
+.stats-row { grid-template-columns: repeat(4, 1fr); }
+{% endblock %}
+
+{% set active = 'odds_api' %}
+{% block content %}
+<div class="page-header">
+  <h1>Odds API</h1>
+  <span class="subtitle">aggregated sportsbook lines across {{ bookmakers|length }} bookmakers</span>
+</div>
+
+<div class="stats-row" style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px;">
+  <div class="stat-card">
+    <div class="label">Total Markets</div>
+    <div class="value">{{ market_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Bookmakers</div>
+    <div class="value">{{ bookmakers|length }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Last Fetch</div>
+    <div class="value" style="font-size:14px">{{ last_updated.split('T')[1][:8] if last_updated else '—' }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Source</div>
+    <div class="value" style="font-size:14px"><span class="source-tag source-odds_api">the-odds-api.com</span></div>
+  </div>
+</div>
+
+{% if not bookmakers %}
+<div class="card"><div class="empty">No markets loaded yet. Check your ODDS_API_KEY in .env</div></div>
+{% else %}
+{% for bookmaker, markets in bookmakers.items() %}
+<div class="bookmaker-section">
+  <div class="card-header" style="background:var(--surface); border:1px solid var(--border); border-radius:8px 8px 0 0; padding:12px 16px; display:flex; align-items:center; gap:10px;">
+    <h3>{{ bookmaker }}</h3>
+    <span class="badge blue">{{ markets|length }} markets</span>
+  </div>
+  <div style="border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px;">
+    <div class="bookmaker-grid">
+    {% for m in markets[:12] %}
+      <div class="market-card">
+        <div class="event">{{ m.event_name }}</div>
+        <div class="meta">
+          <span class="badge blue" style="margin-right:4px">{{ m.sport.split('_')[0] }}</span>
+          {{ m.market_type }}
+          {% if m.commence_time %}· {{ m.commence_time.strftime('%b %d %H:%M') }}{% endif %}
+        </div>
+        <div class="outcomes">
+          {% for o in m.outcomes %}
+          <div class="outcome-chip">
+            <div class="oname">{{ o.name }}</div>
+            <div class="oprice">{{ "%.2f"|format(o.price) }}</div>
+            <div class="oprob">{{ "%.1f"|format(o.implied_prob * 100) }}%</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    {% if markets|length > 12 %}
+    <div class="market-card" style="display:flex;align-items:center;justify-content:center;color:var(--muted)">
+      +{{ markets|length - 12 }} more markets
+    </div>
+    {% endif %}
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

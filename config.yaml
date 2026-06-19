@@ -1,0 +1,80 @@
+odds_api:
+  api_key: "${ODDS_API_KEY}"
+  base_url: "https://api.the-odds-api.com/v4"
+  # ⚠️  Free plan = 500 req/month.  3 sports × 3 cycles/day × 30d = 270 req.
+  # Upgrade to Basic ($79/mo) for 30,000 req to run every 30s.
+  poll_interval_seconds: 28800   # 8 hours — 270 req/month, safe within 500 free tier
+  sports:
+    - baseball_mlb
+    - basketball_nba
+    - tennis_atp_french_open
+  markets: ["h2h", "spreads", "totals"]
+  regions: ["us", "uk", "eu", "au"]
+  # Player props — fetched once daily per-event (5 events × N sports ≈ 15 req/day)
+  prop_markets:
+    - pitcher_strikeouts
+    - batter_home_runs
+    - batter_hits
+    - batter_total_bases
+    - player_points
+    - player_rebounds
+    - player_assists
+
+betfair:
+  app_key: "${BETFAIR_APP_KEY}"
+  username: "${BETFAIR_USERNAME}"
+  password: "${BETFAIR_PASSWORD}"
+  poll_interval_seconds: 15
+  # Event type IDs: 1=Soccer, 2=Tennis, 4=Cricket, 7=Horse Racing, 29=Football (US)
+  event_type_ids: ["1", "2", "4", "29"]
+  max_results: 50
+
+kalshi:
+  api_key: "${KALSHI_API_KEY}"
+  base_url: "https://api.elections.kalshi.com/trade-api/v2"
+  # Prediction markets: sequential per-event fetch takes ~28s, poll every 10 min
+  poll_interval_seconds: 600
+  # Live sports game markets: faster poll since game odds change quickly
+  sports_poll_interval_seconds: 10
+
+polymarket:
+  clob_url: "https://clob.polymarket.com"
+  gamma_url: "https://gamma-api.polymarket.com"
+  poll_interval_seconds: 300    # fetch every 5 min — CLOB pricing takes 2-3 min
+
+paper_trading:
+  starting_balance: 10000.0
+  max_position_pct: 0.10        # max 10% of balance per arb
+  min_arb_margin: 0.005         # net (post-fee) margin threshold (0.5%)
+  daily_loss_limit: 0.05        # halt if balance drops 5% in one day
+
+predictit:
+  # Direct public API — no auth but rate-limits at sustained high frequency
+  poll_interval_seconds: 300  # refresh every 5 min
+
+prediction_hunt:
+  api_key: "${PREDICTION_HUNT_API_KEY}"
+  # 6-hour base interval — Opinion/PredictFun are small platforms; no need to poll often
+  poll_interval_seconds: 21600
+  # Platforms to fetch via PH (PredictIt handled by dedicated feed; prophetx has no prices)
+  platforms: ["opinion", "predictfun"]
+
+execution:
+  # Real-money execution via Kalshi REST API.
+  # Requires KALSHI_PRIVATE_KEY_PATH set in .env and public key uploaded to Kalshi.
+  # Set KALSHI_EXECUTE=true in .env to enable (default: off).
+  min_annualized_margin: 0.50   # only execute if annualised return ≥ 50%
+  max_days_to_expiry: 30        # only execute markets closing within 30 days
+  max_stake_per_arb: 50.0       # hard cap on total dollars per arb execution
+  dry_run: false                # log what would be placed without sending orders
+
+alerts:
+  enabled: true
+  min_margin_to_alert: 0.03     # alert on 3%+ arbs
+  # slack_webhook: "${SLACK_WEBHOOK_URL}"
+  # email_to: "you@example.com"
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
+  refresh_interval_seconds: 10

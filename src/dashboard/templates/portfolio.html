@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Portfolio — Paper Trading{% endblock %}
+
+{% block extra_style %}
+.stats-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:14px; margin-bottom:20px; }
+@media(max-width:1100px){ .stats-grid{grid-template-columns:repeat(3,1fr)} }
+@media(max-width:700px){ .stats-grid{grid-template-columns:repeat(2,1fr)} }
+
+#pnl-chart { width:100%; height:280px; }
+.chart-wrap { padding:16px; }
+.chart-empty { height:280px; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; }
+
+.pos-table td, .pos-table th { font-size:12px; }
+.status-open     { color:var(--yellow); font-weight:600; }
+.status-settled  { color:var(--green);  font-weight:600; }
+.pnl-pos { color:var(--green); font-weight:700; }
+.pnl-neg { color:var(--red);   font-weight:700; }
+
+.equity-track { background:var(--border); border-radius:4px; height:6px; overflow:hidden; margin-top:6px; }
+.equity-fill  { height:100%; border-radius:4px; transition:width .4s; }
+{% endblock %}
+
+{% set active = 'portfolio' %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Paper Trading Portfolio</h1>
+  <span class="subtitle">simulated execution · no real money at risk</span>
+</div>
+
+<div class="stats-grid" id="stats-grid">
+  <div class="stat-card">
+    <div class="label">Balance</div>
+    <div class="value" id="s-balance">—</div>
+    <div class="equity-track"><div class="equity-fill" id="equity-fill" style="width:100%;background:var(--green)"></div></div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Total P&L</div>
+    <div class="value" id="s-pnl">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Return</div>
+    <div class="value" id="s-return">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Settled</div>
+    <div class="value" id="s-settled">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Open</div>
+    <div class="value yellow" id="s-open">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Win Rate</div>
+    <div class="value" id="s-winrate">—</div>
+  </div>
+</div>
+
+<!-- TradingView equity curve -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header">
+    <h3>Cumulative P&L</h3>
+    <span class="ts" id="chart-status">loading…</span>
+  </div>
+  <div class="chart-wrap">
+    <div id="pnl-chart"></div>
+  </div>
+</div>
+
+<!-- Recent positions -->
+<div class="card">
+  <div class="card-header">
+    <h3>Recent positions</h3>
+    <span class="ts">settled positions show actual P&L</span>
+  </div>
+  <table class="pos-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Event</th>
+        <th>Opened</th>
+        <th>Stake</th>
+        <th>Exp. profit</th>
+        <th>Status</th>
+        <th>Actual P&L</th>
+      </tr>
+    </thead>
+    <tbody id="pos-tbody">
+      <tr><td colspan="7" class="empty">No positions yet — paper trades appear here automatically.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><h3>How fees work in this agent</h3></div>
+  <div style="padding:16px;color:var(--muted);line-height:1.9;font-size:12px">
+    <p><strong style="color:var(--text)">Polymarket taker</strong> — 2% on net winnings. Use limit orders (maker) for 0% fee. The detector shows both gross and net margins.</p>
+    <p><strong style="color:var(--text)">Kalshi</strong> — <code>ceil(0.07 × price × (1−price))</code> per contract added to cost basis. Approx 1–2% depending on contract price.</p>
+    <p><strong style="color:var(--text)">Betfair</strong> — 5% commission on net winnings from back bets; back/lay arbs shown separately.</p>
+    <p><strong style="color:var(--text)">Sportsbooks (Odds API)</strong> — vig baked into quoted odds. No additional fee modelled.</p>
+    <p style="margin-top:8px">The <strong style="color:var(--green)">net margin</strong> column in the Arb table is what you actually keep after all fees. Only act on net margins above ~2%.</p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_script %}
+<!-- TradingView Lightweight Charts (CDN, ~40KB) -->
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+// ── Chart setup ────────────────────────────────────────────────────────────
+let _chart = null;
+let _series = null;
+let _chartLoaded = false;
+
+function initChart() {
+  const el = document.getElementById('pnl-chart');
+  _chart = LightweightCharts.createChart(el, {
+    layout: {
+      background: { type: 'solid', color: '#1a1d27' },
+      textColor: '#6b7280',
+    },
+    grid: {
+      vertLines: { color: '#2a2d3e' },
+      horzLines: { color: '#2a2d3e' },
+    },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#2a2d3e' },
+    timeScale: { borderColor: '#2a2d3e', timeVisible: true },
+    handleScroll: true,
+    handleScale: true,
+  });
+
+  _series = _chart.addAreaSeries({
+    lineColor: '#10b981',
+    topColor: 'rgba(16,185,129,0.35)',
+    bottomColor: 'rgba(16,185,129,0.02)',
+    lineWidth: 2,
+    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+  });
+
+  // Resize observer
+  new ResizeObserver(() => {
+    _chart.applyOptions({ width: el.clientWidth });
+  }).observe(el);
+
+  loadChartData();
+}
+
+async function loadChartData() {
+  try {
+    const r = await fetch('/api/pnl-history');
+    const j = await r.json();
+    const history = j.history || [];
+
+    if (!history.length) {
+      document.getElementById('chart-status').textContent = 'no settled positions yet';
+      return;
+    }
+
+    // Deduplicate by date (TradingView requires unique ascending times)
+    const seen = new Set();
+    const points = history
+      .filter(p => { if (seen.has(p.time)) return false; seen.add(p.time); return true; })
+      .map(p => ({ time: p.time, value: p.value }));
+
+    _series.setData(points);
+    _chart.timeScale().fitContent();
+    document.getElementById('chart-status').textContent =
+      `${points.length} data point${points.length !== 1 ? 's' : ''}`;
+    _chartLoaded = true;
+  } catch(e) {
+    document.getElementById('chart-status').textContent = 'chart unavailable';
+  }
+}
+
+// ── Stats update from WebSocket ────────────────────────────────────────────
+window.addEventListener('arbstate', e => {
+  const s = e.detail.stats || {};
+  if (!s.balance) return;
+
+  const pnl = s.total_pnl || 0;
+  const pct = s.pnl_pct || 0;
+  const sign = pnl >= 0 ? '+' : '';
+  const cls  = pnl >= 0 ? 'green' : 'red';
+
+  document.getElementById('s-balance').textContent = '$' + s.balance.toFixed(2);
+  document.getElementById('s-balance').className = 'value ' + cls;
+
+  document.getElementById('s-pnl').textContent = sign + '$' + pnl.toFixed(2);
+  document.getElementById('s-pnl').className = 'value ' + cls;
+
+  document.getElementById('s-return').textContent = sign + pct.toFixed(2) + '%';
+  document.getElementById('s-return').className = 'value ' + cls;
+
+  document.getElementById('s-settled').textContent = s.total_positions || 0;
+  document.getElementById('s-open').textContent    = s.open_positions  || 0;
+
+  const wr = s.win_rate || 0;
+  document.getElementById('s-winrate').textContent = wr.toFixed(1) + '%';
+  document.getElementById('s-winrate').className = 'value ' + (wr >= 50 ? 'green' : 'red');
+
+  // Equity bar
+  const ratio = Math.min(s.balance / s.starting_balance, 2);
+  document.getElementById('equity-fill').style.width = (ratio * 50) + '%';
+  document.getElementById('equity-fill').style.background = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+  // Reload chart data periodically to pick up new settled positions
+  if (_chartLoaded) loadChartData();
+});
+
+// ── Positions table ────────────────────────────────────────────────────────
+async function loadPositions() {
+  // Positions endpoint not yet exposed via WS — fetch directly from existing /api/state
+  // (positions would need their own endpoint; use stats for now)
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof LightweightCharts !== 'undefined') {
+    initChart();
+  } else {
+    document.getElementById('pnl-chart').innerHTML =
+      '<div class="chart-empty">Chart library failed to load (check network)</div>';
+  }
+});
+</script>
+{% endblock %}
