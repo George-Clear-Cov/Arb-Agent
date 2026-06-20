@@ -319,7 +319,7 @@ function renderAccountCards() {
 
   Object.entries(d.balances||{}).forEach(([inst,accounts])=>{
     if(!accounts||accounts[0]?.error) return;
-    let bal=0, sub='', isPaidMonthly=false, statement=0, cycle=0, lastPmt='';
+    let bal=0, sub='', isPaidMonthly=false, statement=0, cycle=0, lastPmt='', promo=null;
     accounts.forEach(a=>{
       const c=a.current||0;
       if(a.type==='credit'){
@@ -327,23 +327,41 @@ function renderAccountCards() {
         statement += a.statement_balance||0;
         cycle     += a.cycle_charges||0;
         if(!lastPmt && a.last_payment_date) lastPmt=a.last_payment_date;
+        if(a.promo) promo=a.promo;
       } else if(a.type==='loan'){ bal-=c; }
       else { bal+=c; }
       if(!sub&&a.subtype) sub=a.subtype;
     });
-    container.appendChild(_makeCard(inst, instLabel(inst), bal, sub, isPaidMonthly, statement, cycle, lastPmt));
+    container.appendChild(_makeCard(inst, instLabel(inst), bal, sub, isPaidMonthly, statement, cycle, lastPmt, promo));
   });
 }
 
-function _makeCard(key, label, balance, subtype, isPaidMonthly, statement, cycle, lastPmt) {
+function _makeCard(key, label, balance, subtype, isPaidMonthly, statement, cycle, lastPmt, promo) {
   const card = document.createElement('div');
   card.className = 'acct-card' + (_selectedInst===key?' active':'');
   let inner = '';
   if(isPaidMonthly) {
     const pmtLabel = lastPmt ? `paid ${lastPmt}` : 'paid monthly';
+    let promoHtml = '';
+    if(promo) {
+      const pct = Math.min(promo.months_elapsed / promo.promo_months, 1);
+      const urgency = promo.months_left <= 3 ? '#ef4444' : promo.months_left <= 6 ? '#f59e0b' : '#10b981';
+      promoHtml = `
+        <div style="margin-top:6px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:6px;border:1px solid rgba(255,255,255,0.07)">
+          <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:4px">
+            <span style="color:${urgency};font-weight:600">0% APR · ${promo.months_left}mo left</span>
+            <span style="color:var(--muted)">${promo.months_elapsed}/${promo.promo_months} mo used</span>
+          </div>
+          <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px">
+            <div style="height:4px;width:${Math.round(pct*100)}%;background:${urgency};border-radius:2px;transition:width .3s"></div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">Pay ${fmt(promo.needed_per_month)}/mo to clear before interest</div>
+        </div>`;
+    }
     inner = `
       <div class="ac-bal" style="color:var(--text2);font-size:15px">${fmt(statement)} <span style="font-size:11px;color:var(--muted)">due</span></div>
-      <div class="ac-sub">${fmt(cycle)} accruing · ${pmtLabel}</div>`;
+      <div class="ac-sub">${fmt(cycle)} accruing · ${pmtLabel}</div>
+      ${promoHtml}`;
   } else {
     const balColor = balance < 0 ? 'red' : 'green';
     inner = `
