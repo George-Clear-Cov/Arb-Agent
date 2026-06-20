@@ -315,7 +315,7 @@ function renderAccountCards() {
   const allSpend = Object.values(d.spending_by_institution||{})
     .reduce((sum,cats)=>sum+Object.values(cats).reduce((a,v)=>a+v,0),0);
   // "All" card shows net worth (assets - loans only, not cards)
-  container.appendChild(_makeCard('__all__', 'All Accounts', s.net_worth, allSpend, null, false));
+  container.appendChild(_makeCard('__all__', 'All Accounts', s.net_worth, null, false, 0, 0, '', null));
 
   Object.entries(d.balances||{}).forEach(([inst,accounts])=>{
     if(!accounts||accounts[0]?.error) return;
