@@ -38,6 +38,7 @@ class Outcome:
     side: BetSide = BetSide.BACK
     available_volume: Optional[float] = None  # liquidity in $, Betfair/CLOB
     is_maker: bool = False                    # Polymarket limit order = 0% fee
+    token_id: Optional[str] = None           # Polymarket CLOB token ID for order placement
 
 
 @dataclass
@@ -106,6 +107,7 @@ class ArbLeg:
     effective_price: float  # fee-adjusted price used in arb math
     stake: float
     side: BetSide = BetSide.BACK
+    token_id: Optional[str] = None  # Polymarket CLOB token ID
 
     @property
     def payout(self) -> float:

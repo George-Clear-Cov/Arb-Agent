@@ -437,15 +437,19 @@ class PolymarketCLOBFeed(BaseFeed):
             if _lm:
                 _totals_line = _lm.group(1)
 
+        token_id_list = clobTokenIds if (clobTokenIds and isinstance(clobTokenIds, list)) else []
         outcomes = []
+        outcome_idx = 0
         for name, prob, vol in zip(outcomes_data, outcome_prices, volumes or [0] * len(outcomes_data)):
             if prob <= 0 or prob >= 1:
                 log.debug(
                     "Polymarket market %s (%s): skipping outcome '%s' — prob %.4f out of range",
                     mid, question, name, prob,
                 )
+                outcome_idx += 1
                 continue
             dec_price = round(1 / prob, 4)
+            clob_token = str(token_id_list[outcome_idx]) if outcome_idx < len(token_id_list) else None
             # Rename "Over"/"Under" to "Over X.5"/"Under X.5" for totals markets
             # so the arb detector can match same-line outcomes across platforms.
             outcome_name = name
@@ -465,7 +469,9 @@ class PolymarketCLOBFeed(BaseFeed):
                 side=BetSide.BACK,
                 available_volume=float(vol) if vol else None,
                 is_maker=False,  # assume taker; use limit orders in execution for 0% fee
+                token_id=clob_token,
             ))
+            outcome_idx += 1
 
         if len(outcomes) < 2:
             log.debug(

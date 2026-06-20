@@ -34,6 +34,7 @@ from src.engine.feed_monitor import feed_monitor
 from src.engine.matcher import init_llm_matcher
 from src.execution.kalshi_exec import KalshiExecutor
 from src.execution.paper_trader import PaperTrader
+from src.execution.polymarket_exec import PolymarketExecutor
 from src.feeds.kalshi import KalshiFeed
 from src.feeds.kalshi_sports import KalshiSportsFeed
 from src.feeds.polymarket_clob import PolymarketCLOBFeed
@@ -228,6 +229,7 @@ class Agent:
         self._exec_max_stake       = exec_cfg.get("max_stake_per_arb", 50.0)
         self._exec_dry_run         = exec_cfg.get("dry_run", False)
         self._executor: KalshiExecutor | None = None
+        self._poly_executor: PolymarketExecutor | None = None
         self._executed_arb_ids: set[str] = set()  # prevents re-firing same arb each cycle
 
         # Daily loss tracking
@@ -305,6 +307,15 @@ class Agent:
                 self._exec_enabled = False
         elif self._exec_enabled:
             log.warning("KALSHI_EXECUTE=true but no KALSHI_EXEC_API_KEY — execution disabled")
+
+        # Polymarket execution — enabled when POLYMARKET_EXECUTE=true + POLY_PRIVATE_KEY set
+        poly_priv = os.environ.get("POLY_PRIVATE_KEY", "")
+        if os.environ.get("POLYMARKET_EXECUTE", "").lower() == "true" and poly_priv:
+            try:
+                self._poly_executor = PolymarketExecutor(private_key=poly_priv)
+                log.info("Polymarket executor ready — wallet %s", self._poly_executor._address[:10])
+            except Exception as exc:
+                log.error("Polymarket executor disabled: %s", exc)
 
         po = self.cfg["polymarket"]
         self._poly_feed = PolymarketCLOBFeed(
@@ -437,31 +448,40 @@ class Agent:
                 arb.expires_at.strftime("%Y-%m-%d") if arb.expires_at else "?",
             )
 
+            # Execute each platform's legs with the right executor
+            results = []
             try:
-                result = await self._executor.execute_arb(
-                    arb,
-                    max_stake=self._exec_max_stake,
-                    dry_run=self._exec_dry_run,
-                )
+                if self._executor:
+                    r = await self._executor.execute_arb(
+                        arb, max_stake=self._exec_max_stake, dry_run=self._exec_dry_run,
+                    )
+                    results.append(r)
+                if self._poly_executor:
+                    r = await self._poly_executor.execute_arb(
+                        arb, max_stake=self._exec_max_stake, dry_run=self._exec_dry_run,
+                    )
+                    results.append(r)
             except Exception as exc:
                 log.exception("AUTO-EXEC exception for arb %s: %s", arb.id, exc)
                 continue
 
-            if result.fully_filled:
+            fully_filled = results and all(r.fully_filled for r in results if r.error != "dry_run")
+            hedged       = any(getattr(r, "hedged", False) for r in results)
+
+            if fully_filled:
                 log.info(
                     "AUTO-EXEC SUCCESS arb=%s | %.1f%% margin | legs=%d",
-                    arb.id, arb.margin * 100, len(result.leg_results),
+                    arb.id, arb.margin * 100, sum(len(r.leg_results) for r in results),
                 )
-                await self._notifier.notify_arbs([arb])  # fire alert for executed arbs
+                await self._notifier.notify_arbs([arb])
 
-            elif result.hedged:
+            elif hedged:
                 msg = (
                     f"ONE-LEGGED POSITION — MANUAL HEDGE NEEDED: arb {arb.id} "
                     f"({arb.event_name[:50]}) filled one side but the other failed. "
-                    f"Check Kalshi dashboard immediately."
+                    f"Check Kalshi and Polymarket dashboards immediately."
                 )
                 log.error("AUTO-EXEC HEDGE ALERT: %s", msg)
-                # Force-alert even if already notified about this arb ID
                 await self._notifier.notify_arbs([arb])
 
             elif result.partial:

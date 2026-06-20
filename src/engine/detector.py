@@ -244,6 +244,7 @@ def _check_back_arb(
             effective_price=eff,
             stake=leg_stake,
             side=BetSide.BACK,
+            token_id=outcome.token_id,
         ))
 
     ref = markets[0]
