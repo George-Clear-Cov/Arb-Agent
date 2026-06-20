@@ -284,11 +284,13 @@ class Agent:
             )
 
         # Real-money execution — only if KALSHI_EXECUTE=true and private key exists
-        if self._exec_enabled and ka.get("api_key"):
+        # KALSHI_EXEC_API_KEY is the RSA-signing UUID (separate from read-only KALSHI_API_KEY)
+        exec_api_key = os.environ.get("KALSHI_EXEC_API_KEY") or ka.get("api_key")
+        if self._exec_enabled and exec_api_key:
             key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "~/.kalshi/private_key.pem")
             try:
                 self._executor = KalshiExecutor(
-                    api_key=ka["api_key"],
+                    api_key=exec_api_key,
                     private_key_path=key_path,
                     base_url=ka["base_url"],
                 )
@@ -302,7 +304,7 @@ class Agent:
                 log.error("Kalshi executor disabled: %s", exc)
                 self._exec_enabled = False
         elif self._exec_enabled:
-            log.warning("KALSHI_EXECUTE=true but no KALSHI_API_KEY — execution disabled")
+            log.warning("KALSHI_EXECUTE=true but no KALSHI_EXEC_API_KEY — execution disabled")
 
         po = self.cfg["polymarket"]
         self._poly_feed = PolymarketCLOBFeed(
