@@ -36,7 +36,11 @@ def _market_url(leg: ArbLeg) -> str | None:
     if leg.source in (Source.KALSHI, Source.KALSHI_SPORTS):
         return f"https://kalshi.com/markets/{mid}"
     if leg.source == Source.POLYMARKET:
-        return f"https://polymarket.com/event/{mid}"
+        # mid is the gamma market slug (e.g. "phillies-vs-padres-yes-jun-20")
+        # numeric-only fallback means slug was missing — skip link rather than send a broken URL
+        if mid and not mid.isdigit():
+            return f"https://polymarket.com/market/{mid}"
+        return None
     if leg.source == Source.PREDICTIT:
         return f"https://www.predictit.org/markets/detail/{mid}"
     return None
