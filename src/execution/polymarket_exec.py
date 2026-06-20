@@ -38,7 +38,6 @@ from typing import Optional
 import httpx
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from eth_account.structured_data.hashing import hash_message
 
 from src.models import ArbLeg, ArbOpportunity, Source
 
