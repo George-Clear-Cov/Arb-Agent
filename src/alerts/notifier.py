@@ -51,15 +51,20 @@ async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
     web_url  — canonical /event/... URL, opens in browser at the right market
     app_url  — /us/ URL that triggers the iOS app (lands on homepage — app limitation)
     """
-    web_url = f"https://polymarket.com/market/{slug}"  # fallback
+    fallback = f"https://polymarket.com/market/{slug}"
+    web_url  = fallback
     try:
-        resp = await client.get(web_url, follow_redirects=False, timeout=5)
+        resp     = await client.get(fallback, follow_redirects=False, timeout=5)
         location = resp.headers.get("location", "")
         if "/event/" in location:
-            web_url = location  # canonical: https://polymarket.com/event/...
+            # location may be relative (/event/...) or absolute
+            if location.startswith("http"):
+                web_url = location
+            else:
+                web_url = f"https://polymarket.com{location}"
     except Exception:
         pass
-    path = web_url.split("polymarket.com", 1)[-1]
+    path    = web_url.split("polymarket.com", 1)[-1]  # /event/slug/market-slug
     app_url = f"https://polymarket.com/us{path}"
     return web_url, app_url
 
