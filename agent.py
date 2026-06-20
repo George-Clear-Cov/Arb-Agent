@@ -293,8 +293,8 @@ class Agent:
                     base_url=ka["base_url"],
                 )
                 log.info(
-                    "Kalshi executor ready — min margin %.0f%% | max stake $%.0f | dry_run=%s",
-                    self._exec_min_margin * 100,
+                    "Kalshi executor ready — min ann. margin %.0f%% | max stake $%.0f | dry_run=%s",
+                    self._exec_min_ann_margin * 100,
                     self._exec_max_stake,
                     self._exec_dry_run,
                 )
