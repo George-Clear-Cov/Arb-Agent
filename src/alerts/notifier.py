@@ -45,22 +45,23 @@ def _market_url(leg: ArbLeg) -> str | None:
     return None
 
 
-async def _resolve_poly_url(slug: str, client) -> str:
-    """Resolve /market/{slug} → canonical /event/... path, then prepend /us/ for iOS deep link."""
+async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
+    """Return (web_url, app_url) for a Polymarket market slug.
+
+    web_url  — canonical /event/... URL, opens in browser at the right market
+    app_url  — /us/ URL that triggers the iOS app (lands on homepage — app limitation)
+    """
+    web_url = f"https://polymarket.com/market/{slug}"  # fallback
     try:
-        resp = await client.get(
-            f"https://polymarket.com/market/{slug}",
-            follow_redirects=False, timeout=5,
-        )
+        resp = await client.get(web_url, follow_redirects=False, timeout=5)
         location = resp.headers.get("location", "")
-        # location is like https://polymarket.com/event/world-cup-winner/will-iraq-...
         if "/event/" in location:
-            path = location.split("polymarket.com", 1)[-1]  # /event/slug/market-slug
-            return f"https://polymarket.com/us{path}"
+            web_url = location  # canonical: https://polymarket.com/event/...
     except Exception:
         pass
-    # Fallback: /us/market/ still opens the app, just not to the right market
-    return f"https://polymarket.com/us/market/{slug}"
+    path = web_url.split("polymarket.com", 1)[-1]
+    app_url = f"https://polymarket.com/us{path}"
+    return web_url, app_url
 
 
 def _mac_notify(title: str, message: str) -> None:
@@ -174,20 +175,25 @@ class Notifier:
 
             api_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/sendMessage"
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # Resolve Polymarket URLs (needs redirect follow to get canonical event path)
+                # Resolve Polymarket URLs async (follows redirect to get canonical event path)
                 raw_urls = {l: _market_url(l) for l in arb.legs}
-                resolved_urls: dict = {}
+                poly_urls: dict = {}  # leg → (web_url, app_url)
                 for l, u in raw_urls.items():
                     if u and u.startswith("__poly__"):
-                        resolved_urls[l] = await _resolve_poly_url(u[len("__poly__"):], client)
-                    else:
-                        resolved_urls[l] = u
+                        poly_urls[l] = await _resolve_poly_urls(u[len("__poly__"):], client)
 
                 leg_lines = []
                 for l in arb.legs:
-                    url = resolved_urls.get(l)
+                    raw = raw_urls.get(l)
                     bookmaker = l.bookmaker or l.source.value
-                    link = f'<a href="{url}">{bookmaker}</a>' if url else bookmaker
+                    if l in poly_urls:
+                        web, app = poly_urls[l]
+                        # Two links: market page in browser + app shortcut
+                        link = f'<a href="{web}">{bookmaker}</a> · <a href="{app}">app</a>'
+                    elif raw:
+                        link = f'<a href="{raw}">{bookmaker}</a>'
+                    else:
+                        link = bookmaker
                     leg_lines.append(
                         f"  └ <b>{l.outcome_name}</b> @ {link}  {l.price:.3f}  → <b>bet ${l.stake:.0f}</b>"
                     )
