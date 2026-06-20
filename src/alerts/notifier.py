@@ -36,10 +36,9 @@ def _market_url(leg: ArbLeg) -> str | None:
     if leg.source in (Source.KALSHI, Source.KALSHI_SPORTS):
         return f"https://kalshi.com/markets/{mid}"
     if leg.source == Source.POLYMARKET:
-        # mid is the gamma market slug (e.g. "phillies-vs-padres-yes-jun-20")
-        # numeric-only fallback means slug was missing — skip link rather than send a broken URL
+        # AASA only registers /us/* — /market/ alone won't open the iOS app
         if mid and not mid.isdigit():
-            return f"https://polymarket.com/market/{mid}"
+            return f"https://polymarket.com/us/market/{mid}"
         return None
     if leg.source == Source.PREDICTIT:
         return f"https://www.predictit.org/markets/detail/{mid}"
