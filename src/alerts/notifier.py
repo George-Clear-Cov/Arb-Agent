@@ -36,13 +36,31 @@ def _market_url(leg: ArbLeg) -> str | None:
     if leg.source in (Source.KALSHI, Source.KALSHI_SPORTS):
         return f"https://kalshi.com/markets/{mid}"
     if leg.source == Source.POLYMARKET:
-        # AASA only registers /us/* — /market/ alone won't open the iOS app
         if mid and not mid.isdigit():
-            return f"https://polymarket.com/us/market/{mid}"
+            # Store slug so _resolve_poly_url can build the deep link async
+            return f"__poly__{mid}"
         return None
     if leg.source == Source.PREDICTIT:
         return f"https://www.predictit.org/markets/detail/{mid}"
     return None
+
+
+async def _resolve_poly_url(slug: str, client) -> str:
+    """Resolve /market/{slug} → canonical /event/... path, then prepend /us/ for iOS deep link."""
+    try:
+        resp = await client.get(
+            f"https://polymarket.com/market/{slug}",
+            follow_redirects=False, timeout=5,
+        )
+        location = resp.headers.get("location", "")
+        # location is like https://polymarket.com/event/world-cup-winner/will-iraq-...
+        if "/event/" in location:
+            path = location.split("polymarket.com", 1)[-1]  # /event/slug/market-slug
+            return f"https://polymarket.com/us{path}"
+    except Exception:
+        pass
+    # Fallback: /us/market/ still opens the app, just not to the right market
+    return f"https://polymarket.com/us/market/{slug}"
 
 
 def _mac_notify(title: str, message: str) -> None:
@@ -154,26 +172,34 @@ class Notifier:
             else:
                 expiry_str = f"{days:.0f}d left"
 
-            leg_lines = []
-            for l in arb.legs:
-                url = _market_url(l)
-                bookmaker = l.bookmaker or l.source.value
-                link = f'<a href="{url}">{bookmaker}</a>' if url else bookmaker
-                leg_lines.append(
-                    f"  └ <b>{l.outcome_name}</b> @ {link}  {l.price:.3f}  → <b>bet ${l.stake:.0f}</b>"
-                )
-
-            sources = " × ".join(sorted({l.source.value for l in arb.legs}))
-            text = (
-                f"{sport_emoji} <b>ARB {margin_pct:.1f}%</b>  ⏱ {expiry_str}\n"
-                f"<b>{arb.event_name}</b>\n"
-                f"Platforms: {sources}\n\n"
-                + "\n".join(leg_lines)
-                + f"\n\n💰 Put in <b>${arb.total_stake:.0f}</b>  →  lock in <b>${arb.profit:.0f}</b>"
-            )
-
             api_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/sendMessage"
             async with httpx.AsyncClient(timeout=5.0) as client:
+                # Resolve Polymarket URLs (needs redirect follow to get canonical event path)
+                raw_urls = {l: _market_url(l) for l in arb.legs}
+                resolved_urls: dict = {}
+                for l, u in raw_urls.items():
+                    if u and u.startswith("__poly__"):
+                        resolved_urls[l] = await _resolve_poly_url(u[len("__poly__"):], client)
+                    else:
+                        resolved_urls[l] = u
+
+                leg_lines = []
+                for l in arb.legs:
+                    url = resolved_urls.get(l)
+                    bookmaker = l.bookmaker or l.source.value
+                    link = f'<a href="{url}">{bookmaker}</a>' if url else bookmaker
+                    leg_lines.append(
+                        f"  └ <b>{l.outcome_name}</b> @ {link}  {l.price:.3f}  → <b>bet ${l.stake:.0f}</b>"
+                    )
+
+                sources = " × ".join(sorted({l.source.value for l in arb.legs}))
+                text = (
+                    f"{sport_emoji} <b>ARB {margin_pct:.1f}%</b>  ⏱ {expiry_str}\n"
+                    f"<b>{arb.event_name}</b>\n"
+                    f"Platforms: {sources}\n\n"
+                    + "\n".join(leg_lines)
+                    + f"\n\n💰 Put in <b>${arb.total_stake:.0f}</b>  →  lock in <b>${arb.profit:.0f}</b>"
+                )
                 await client.post(api_url, json={
                     "chat_id": _TELEGRAM_CHAT_ID,
                     "text": text,
