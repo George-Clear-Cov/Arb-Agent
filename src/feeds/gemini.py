@@ -58,77 +58,121 @@ class GeminiFeed:
 
         markets: list[Market] = []
         for event in raw_events:
-            if event.get("type") != "binary":
-                continue
             parsed = self._parse_event(event)
-            if parsed:
-                markets.append(parsed)
+            markets.extend(parsed)
 
         log.info("Gemini: %d markets", len(markets))
         return markets
 
-    def _parse_event(self, event: dict) -> Market | None:
+    def _parse_event(self, event: dict) -> list[Market]:
+        """
+        Binary events: 1 contract with YES+NO prices in prices.buy.yes / prices.buy.no
+        Categorical events: N contracts, each becomes a standalone binary market
+        (e.g. "Men's World Cup Winner?" → 56 separate "Will France win?" markets)
+        """
+        evt_type = event.get("type", "")
         contracts = event.get("contracts", [])
-        if len(contracts) < 2:
-            return None
-
-        # Binary events have exactly 2 contracts: typically "Up"/"Down" or "Yes"/"No"
-        # Find the YES-side and NO-side prices from bestBid/bestAsk
-        outcomes: list[Outcome] = []
-        for contract in contracts:
-            if contract.get("marketState") != "open":
-                continue
-            prices = contract.get("prices", {})
-            best_ask = prices.get("bestAsk")
-            best_bid = prices.get("bestBid")
-            if best_ask is None or best_bid is None:
-                continue
-
-            ask_prob = float(best_ask)   # cost to buy this side = ask price = implied prob
-            if not (MIN_PROB < ask_prob < MAX_PROB):
-                continue
-
-            decimal_price = round(1 / ask_prob, 4)
-            label = contract.get("label", contract.get("ticker", "?"))
-            market_id = contract.get("id", "")
-            vol = event.get("volume24h")
-
-            outcomes.append(Outcome(
-                name=label,
-                price=decimal_price,
-                implied_prob=ask_prob,
-                source=Source.GEMINI,
-                market_id=market_id,
-                bookmaker="Gemini",
-                side=BetSide.BACK,
-                available_volume=float(vol) if vol else None,
-            ))
-
-        if len(outcomes) < 2:
-            return None
+        if not contracts:
+            return []
 
         expiry = event.get("expiryDate")
         vol_str = event.get("volume24h") or event.get("volume")
+        vol = float(vol_str) if vol_str else None
+        category = event.get("category", "")
+        sport = _category_to_sport(category)
+        commence = _parse_dt(event.get("startTime") or expiry)
 
-        return Market(
-            source=Source.GEMINI,
-            market_id=event.get("ticker", event["id"]),
-            sport=_category_to_sport(event.get("category", "")),
-            event_name=event.get("title", ""),
-            commence_time=_parse_dt(event.get("startTime") or expiry),
-            home_team=None,
-            away_team=None,
-            market_type="binary",
-            outcomes=outcomes,
-            total_volume=float(vol_str) if vol_str else None,
-            raw={
-                "ticker": event.get("ticker"),
-                "series": event.get("series"),
-                "category": event.get("category"),
-                "expiry": expiry,
-                "source_index": (event.get("sourceDetails") or {}).get("index"),
-            },
-        )
+        markets: list[Market] = []
+
+        if evt_type == "binary":
+            # Single contract has YES and NO prices side-by-side
+            contract = contracts[0]
+            if contract.get("marketState") != "open":
+                return []
+            prices = contract.get("prices", {})
+            yes_ask_str = prices.get("bestAsk") or prices.get("buy", {}).get("yes")
+            no_ask_str  = prices.get("buy", {}).get("no")
+            if not yes_ask_str or not no_ask_str:
+                return []
+            yes_ask = float(yes_ask_str)
+            no_ask  = float(no_ask_str)
+            if not (MIN_PROB < yes_ask < MAX_PROB and MIN_PROB < no_ask < MAX_PROB):
+                return []
+            # Filter severely illiquid markets (spread > 30%)
+            best_bid_str = prices.get("bestBid")
+            if best_bid_str and (yes_ask - float(best_bid_str)) > 0.30:
+                return []
+            market_id = event.get("ticker", str(event.get("id", "")))
+            markets.append(Market(
+                source=Source.GEMINI,
+                market_id=market_id,
+                sport=sport,
+                event_name=event.get("title", ""),
+                commence_time=commence,
+                home_team=None,
+                away_team=None,
+                market_type="binary",
+                outcomes=[
+                    Outcome(name="Yes", price=round(1 / yes_ask, 4), implied_prob=yes_ask,
+                            source=Source.GEMINI, market_id=market_id, bookmaker="Gemini",
+                            side=BetSide.BACK, available_volume=vol),
+                    Outcome(name="No", price=round(1 / no_ask, 4), implied_prob=no_ask,
+                            source=Source.GEMINI, market_id=market_id, bookmaker="Gemini",
+                            side=BetSide.BACK, available_volume=vol),
+                ],
+                total_volume=vol,
+                raw={"ticker": event.get("ticker"), "series": event.get("series"),
+                     "category": category, "expiry": expiry},
+            ))
+
+        elif evt_type == "categorical":
+            # Each contract = one possible outcome; model each as "Will X happen?" binary market
+            event_title = event.get("title", "")
+            event_ticker = event.get("ticker", str(event.get("id", "")))
+            for contract in contracts:
+                if contract.get("marketState") != "open":
+                    continue
+                prices = contract.get("prices", {})
+                yes_ask_str = prices.get("bestAsk")
+                yes_bid_str = prices.get("bestBid")
+                if not yes_ask_str or not yes_bid_str:
+                    continue
+                yes_ask = float(yes_ask_str)
+                yes_bid = float(yes_bid_str)
+                if not (MIN_PROB < yes_ask < MAX_PROB):
+                    continue
+                if (yes_ask - yes_bid) > 0.20:  # skip illiquid
+                    continue
+                # NO side = cost to bet against this outcome ≈ 1 - yes_bid
+                no_ask = 1.0 - yes_bid
+                if not (MIN_PROB < no_ask < MAX_PROB):
+                    continue
+                label = contract.get("label", "")
+                market_name = f"{event_title}: {label}" if label else event_title
+                contract_id = f"{event_ticker}-{contract.get('ticker', label)}"
+                markets.append(Market(
+                    source=Source.GEMINI,
+                    market_id=contract_id,
+                    sport=sport,
+                    event_name=market_name,
+                    commence_time=commence,
+                    home_team=None,
+                    away_team=None,
+                    market_type="binary",
+                    outcomes=[
+                        Outcome(name="Yes", price=round(1 / yes_ask, 4), implied_prob=yes_ask,
+                                source=Source.GEMINI, market_id=contract_id, bookmaker="Gemini",
+                                side=BetSide.BACK, available_volume=vol),
+                        Outcome(name="No", price=round(1 / no_ask, 4), implied_prob=no_ask,
+                                source=Source.GEMINI, market_id=contract_id, bookmaker="Gemini",
+                                side=BetSide.BACK, available_volume=vol),
+                    ],
+                    total_volume=vol,
+                    raw={"event_ticker": event_ticker, "contract_ticker": contract.get("ticker"),
+                         "category": category, "expiry": expiry},
+                ))
+
+        return markets
 
     async def close(self) -> None:
         await self._client.aclose()
