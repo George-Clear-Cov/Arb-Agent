@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import subprocess
-import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,13 +20,14 @@ log = logging.getLogger(__name__)
 
 _TELEGRAM_TOKEN   = "8305669215:AAF4yquHVqTnoJ9XoSX0vZCZjCiQcxxJBLo"
 _TELEGRAM_CHAT_ID = "7960884508"
+_NTFY_TOPIC       = os.environ.get("NTFY_TOPIC", "")
+_GMAIL_USER       = os.environ.get("GMAIL_USER", "")
+_GMAIL_APP_PASS   = os.environ.get("GMAIL_APP_PASSWORD", "")
+_SMS_GATEWAY      = os.environ.get("SMS_GATEWAY", "7183138104@tmomail.net")
 
-# GitHub Pages URL for the Mini App redirect page
-_MINI_APP_BASE = "https://george-clear-cov.github.io/Arb-Agent/poly-open.html"
-
-MIN_MARGIN_PCT      = 5.0   # net ROI threshold — lowered from 10% to catch game arbs
-MIN_MARGIN_PCT_SLOW = 10.0  # higher bar for outright/long-dated prediction markets
-MAX_DAYS            = 30    # only alert on arbs expiring within 30 days
+MIN_MARGIN_PCT      = 5.0
+MIN_MARGIN_PCT_SLOW = 10.0
+MAX_DAYS            = 30
 
 
 def _days_left(expires_at: datetime) -> float:
@@ -51,9 +52,8 @@ def _market_url(leg: ArbLeg) -> str | None:
 async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
     """Return (web_url, app_url) for a Polymarket market slug.
 
-    web_url — canonical /event/... URL, opens in browser at the right market
-    app_url — polymarket.us/events/{event-slug} universal link opened via
-              Telegram Mini App so iOS handles it natively
+    web_url — canonical /event/... URL, opens correct market in browser
+    app_url — polymarket.us/events/{event-slug} universal link
     """
     fallback = f"https://polymarket.com/market/{slug}"
     web_url  = fallback
@@ -67,7 +67,6 @@ async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
                 web_url = f"https://polymarket.com{location}"
     except Exception:
         pass
-    # Extract event slug: /event/{event-slug}/{market-slug} → events/{event-slug}
     path  = web_url.split("polymarket.com", 1)[-1]
     parts = path.strip("/").split("/")
     if len(parts) >= 2 and parts[0] in ("event", "events"):
@@ -77,9 +76,22 @@ async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
     return web_url, app_url
 
 
-def _mini_app_url(app_url: str) -> str:
-    """Wrap a polymarket.us deep link in the GitHub Pages Mini App redirect URL."""
-    return f"{_MINI_APP_BASE}?link={urllib.parse.quote(app_url, safe='')}"
+def _send_sms(body: str) -> None:
+    """Send SMS via carrier email gateway using Gmail SMTP. No-op if creds missing."""
+    if not (_GMAIL_USER and _GMAIL_APP_PASS and _SMS_GATEWAY):
+        return
+    import smtplib
+    from email.mime.text import MIMEText
+    try:
+        msg = MIMEText(body)
+        msg["From"]    = _GMAIL_USER
+        msg["To"]      = _SMS_GATEWAY
+        msg["Subject"] = ""
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as s:
+            s.login(_GMAIL_USER, _GMAIL_APP_PASS)
+            s.send_message(msg)
+    except Exception:
+        log.warning("SMS send failed", exc_info=True)
 
 
 def _mac_notify(title: str, message: str) -> None:
@@ -172,6 +184,32 @@ class Notifier:
         except Exception:
             log.exception("Slack notification failed")
 
+    async def _ntfy(self, arb: ArbOpportunity, app_url: str) -> None:
+        """Push a native iOS notification via ntfy.sh; tap opens Polymarket app."""
+        if not _NTFY_TOPIC:
+            return
+        try:
+            import httpx
+            days  = _days_left(arb.expires_at) if arb.expires_at else 0
+            if days < 1:
+                expiry = f"{days*24:.0f}h"
+            else:
+                expiry = f"{days:.0f}d"
+            title = f"ARB {arb.margin*100:.1f}% — {arb.sport.upper()}  +${arb.profit:.0f}"
+            body  = f"{arb.event_name}  ({expiry} left)"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"https://ntfy.sh/{_NTFY_TOPIC}",
+                    content=body.encode(),
+                    headers={
+                        "Title":    title,
+                        "Click":    app_url,   # tapping notification → UIApplication.open() → universal link
+                        "Priority": "high",
+                    },
+                )
+        except Exception:
+            log.warning("ntfy notification failed", exc_info=True)
+
     async def _telegram(self, arb: ArbOpportunity) -> None:
         try:
             import httpx
@@ -221,29 +259,25 @@ class Notifier:
                     + f"\n\n💰 Put in <b>${arb.total_stake:.0f}</b>  →  lock in <b>${arb.profit:.0f}</b>"
                 )
 
-                # Build web_app inline buttons for each Polymarket leg.
-                # Telegram Mini App context allows openLink() → Safari → universal link.
-                keyboard_rows = []
-                seen_app_urls: set[str] = set()
-                for l, (web, app) in poly_urls.items():
-                    if app in seen_app_urls:
-                        continue
-                    seen_app_urls.add(app)
-                    bookmaker = l.bookmaker or l.source.value
-                    keyboard_rows.append([{
-                        "text": f"📱 Open {bookmaker} in app",
-                        "web_app": {"url": _mini_app_url(app)},
-                    }])
-
-                payload: dict = {
+                await client.post(api_url, json={
                     "chat_id": _TELEGRAM_CHAT_ID,
                     "text": text,
                     "parse_mode": "HTML",
                     "disable_web_page_preview": True,
-                }
-                if keyboard_rows:
-                    payload["reply_markup"] = {"inline_keyboard": keyboard_rows}
+                })
 
-                await client.post(api_url, json=payload)
+                # Follow-up plain text message per Polymarket leg — no parse_mode
+                # so Telegram auto-detects the URL and iOS opens it natively,
+                # triggering the universal link into the Polymarket app.
+                seen: set[str] = set()
+                for l, (web, app) in poly_urls.items():
+                    if app not in seen:
+                        seen.add(app)
+                        await client.post(api_url, json={
+                            "chat_id": _TELEGRAM_CHAT_ID,
+                            "text": app,
+                            "disable_web_page_preview": True,
+                        })
+
         except Exception:
             log.warning("Telegram notification failed", exc_info=True)
