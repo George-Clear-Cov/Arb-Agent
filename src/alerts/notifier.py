@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +20,9 @@ log = logging.getLogger(__name__)
 
 _TELEGRAM_TOKEN   = "8305669215:AAF4yquHVqTnoJ9XoSX0vZCZjCiQcxxJBLo"
 _TELEGRAM_CHAT_ID = "7960884508"
+
+# GitHub Pages URL for the Mini App redirect page
+_MINI_APP_BASE = "https://george-clear-cov.github.io/Arb-Agent/poly-open.html"
 
 MIN_MARGIN_PCT      = 5.0   # net ROI threshold — lowered from 10% to catch game arbs
 MIN_MARGIN_PCT_SLOW = 10.0  # higher bar for outright/long-dated prediction markets
@@ -37,7 +41,6 @@ def _market_url(leg: ArbLeg) -> str | None:
         return f"https://kalshi.com/markets/{mid}"
     if leg.source == Source.POLYMARKET:
         if mid and not mid.isdigit():
-            # Store slug so _resolve_poly_url can build the deep link async
             return f"__poly__{mid}"
         return None
     if leg.source == Source.PREDICTIT:
@@ -48,8 +51,9 @@ def _market_url(leg: ArbLeg) -> str | None:
 async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
     """Return (web_url, app_url) for a Polymarket market slug.
 
-    web_url  — canonical /event/... URL, opens in browser at the right market
-    app_url  — /us/ URL that triggers the iOS app (lands on homepage — app limitation)
+    web_url — canonical /event/... URL, opens in browser at the right market
+    app_url — polymarket.us/events/{event-slug} universal link opened via
+              Telegram Mini App so iOS handles it natively
     """
     fallback = f"https://polymarket.com/market/{slug}"
     web_url  = fallback
@@ -57,16 +61,25 @@ async def _resolve_poly_urls(slug: str, client) -> tuple[str, str]:
         resp     = await client.get(fallback, follow_redirects=False, timeout=5)
         location = resp.headers.get("location", "")
         if "/event/" in location:
-            # location may be relative (/event/...) or absolute
             if location.startswith("http"):
                 web_url = location
             else:
                 web_url = f"https://polymarket.com{location}"
     except Exception:
         pass
-    path    = web_url.split("polymarket.com", 1)[-1]  # /event/slug/market-slug
-    app_url = f"https://polymarket.com/us{path}"
+    # Extract event slug: /event/{event-slug}/{market-slug} → events/{event-slug}
+    path  = web_url.split("polymarket.com", 1)[-1]
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] in ("event", "events"):
+        app_url = f"https://polymarket.us/events/{parts[1]}"
+    else:
+        app_url = f"https://polymarket.us{path}"
     return web_url, app_url
+
+
+def _mini_app_url(app_url: str) -> str:
+    """Wrap a polymarket.us deep link in the GitHub Pages Mini App redirect URL."""
+    return f"{_MINI_APP_BASE}?link={urllib.parse.quote(app_url, safe='')}"
 
 
 def _mac_notify(title: str, message: str) -> None:
@@ -94,8 +107,6 @@ class Notifier:
             days = _days_left(arb.expires_at)
             if days <= 0 or days > MAX_DAYS:
                 continue
-            # Game arbs expiring within 24h: lower threshold (prices move fast)
-            # Long-dated / outright markets: require higher margin
             threshold = MIN_MARGIN_PCT if days <= 1 else MIN_MARGIN_PCT_SLOW
             if arb.margin * 100 < threshold:
                 continue
@@ -180,9 +191,8 @@ class Notifier:
 
             api_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/sendMessage"
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # Resolve Polymarket URLs async (follows redirect to get canonical event path)
                 raw_urls = {l: _market_url(l) for l in arb.legs}
-                poly_urls: dict = {}  # leg → (web_url, app_url)
+                poly_urls: dict = {}
                 for l, u in raw_urls.items():
                     if u and u.startswith("__poly__"):
                         poly_urls[l] = await _resolve_poly_urls(u[len("__poly__"):], client)
@@ -192,9 +202,8 @@ class Notifier:
                     raw = raw_urls.get(l)
                     bookmaker = l.bookmaker or l.source.value
                     if l in poly_urls:
-                        web, app = poly_urls[l]
-                        # Two links: market page in browser + app shortcut
-                        link = f'<a href="{web}">{bookmaker}</a> · <a href="{app}">app</a>'
+                        web, _ = poly_urls[l]
+                        link = f'<a href="{web}">{bookmaker}</a>'
                     elif raw:
                         link = f'<a href="{raw}">{bookmaker}</a>'
                     else:
@@ -211,11 +220,30 @@ class Notifier:
                     + "\n".join(leg_lines)
                     + f"\n\n💰 Put in <b>${arb.total_stake:.0f}</b>  →  lock in <b>${arb.profit:.0f}</b>"
                 )
-                await client.post(api_url, json={
+
+                # Build web_app inline buttons for each Polymarket leg.
+                # Telegram Mini App context allows openLink() → Safari → universal link.
+                keyboard_rows = []
+                seen_app_urls: set[str] = set()
+                for l, (web, app) in poly_urls.items():
+                    if app in seen_app_urls:
+                        continue
+                    seen_app_urls.add(app)
+                    bookmaker = l.bookmaker or l.source.value
+                    keyboard_rows.append([{
+                        "text": f"📱 Open {bookmaker} in app",
+                        "web_app": {"url": _mini_app_url(app)},
+                    }])
+
+                payload: dict = {
                     "chat_id": _TELEGRAM_CHAT_ID,
                     "text": text,
                     "parse_mode": "HTML",
-                    "disable_web_page_preview": False,
-                })
+                    "disable_web_page_preview": True,
+                }
+                if keyboard_rows:
+                    payload["reply_markup"] = {"inline_keyboard": keyboard_rows}
+
+                await client.post(api_url, json=payload)
         except Exception:
             log.warning("Telegram notification failed", exc_info=True)
