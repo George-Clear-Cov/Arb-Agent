@@ -41,22 +41,20 @@ class GeminiFeed:
 
     async def _fetch(self) -> list[Market]:
         raw_events: list[dict] = []
-        for category in ("crypto", "sports", "politics", "entertainment"):
-            offset = 0
-            while True:
-                resp = await self._client.get(
-                    f"{BASE}/events",
-                    params={"status": "active", "category": category,
-                            "limit": PAGE_SIZE, "offset": offset},
-                )
-                resp.raise_for_status()
-                body = resp.json()
-                batch = body.get("data", [])
-                raw_events.extend(batch)
-                total = body.get("pagination", {}).get("total", 0)
-                offset += PAGE_SIZE
-                if offset >= total:
-                    break
+        offset = 0
+        while True:
+            resp = await self._client.get(
+                f"{BASE}/events",
+                params={"status": "active", "limit": PAGE_SIZE, "offset": offset},
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            batch = body.get("data", [])
+            raw_events.extend(batch)
+            total = body.get("pagination", {}).get("total", 0)
+            offset += PAGE_SIZE
+            if offset >= total:
+                break
 
         markets: list[Market] = []
         for event in raw_events:
