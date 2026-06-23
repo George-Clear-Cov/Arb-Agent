@@ -21,6 +21,10 @@ PREDICTIT_FEE = 0.10
 PROPHETX_COMMISSION = 0.02
 # Opinion: CLOB taker fee 2% on net profit (same model as Polymarket taker)
 OPINION_TAKER_FEE = 0.02
+# Gemini: CFTC-regulated, charges 2% fee on net profit
+GEMINI_FEE = 0.02
+# Hyperliquid HIP-4: 0.025% taker on notional; binary outcomes settle 0 or 1 USDC
+HYPERLIQUID_TAKER_FEE = 0.0025
 # Predict.fun: Solana-based CLOB, 2% taker fee on net profit
 PREDICTFUN_TAKER_FEE = 0.02
 
@@ -68,6 +72,12 @@ def effective_back_price(raw_price: float, source: Source, is_maker: bool = Fals
         if is_maker:
             return raw_price
         return 1 + net_win * (1 - PREDICTFUN_TAKER_FEE)
+
+    if source == Source.GEMINI:
+        return 1 + net_win * (1 - GEMINI_FEE)
+
+    if source == Source.HYPERLIQUID:
+        return 1 + net_win * (1 - HYPERLIQUID_TAKER_FEE)
 
     # ODDS_API sportsbooks — vig already baked into quoted odds
     return raw_price

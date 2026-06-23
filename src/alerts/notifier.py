@@ -46,6 +46,14 @@ def _market_url(leg: ArbLeg) -> str | None:
         return None
     if leg.source == Source.PREDICTIT:
         return f"https://www.predictit.org/markets/detail/{mid}"
+    if leg.source == Source.OPINION:
+        return f"https://opinion.trade/market/{mid}"
+    if leg.source == Source.GEMINI:
+        return f"https://exchange.gemini.com/predictions/market/{mid}"
+    if leg.source == Source.HYPERLIQUID:
+        return f"https://app.hyperliquid.xyz/outcome/{mid}"
+    if leg.source == Source.PROPHETX:
+        return "https://www.prophetx.co"
     return None
 
 

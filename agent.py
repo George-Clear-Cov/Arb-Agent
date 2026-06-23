@@ -40,6 +40,10 @@ from src.feeds.kalshi_sports import KalshiSportsFeed
 from src.feeds.polymarket_clob import PolymarketCLOBFeed
 from src.feeds.polymarket_ws import PolymarketWSFeed
 from src.feeds.predictit import PredictItFeed
+from src.feeds.opinion import OpinionFeed
+from src.feeds.gemini import GeminiFeed
+from src.feeds.hyperliquid import HyperliquidFeed
+from src.feeds.prophetx import ProphetXFeed
 from src.storage.db import Store
 
 load_dotenv()
@@ -326,6 +330,22 @@ class Agent:
         # Dedicated PredictIt feed — free public API, no auth, no quota concerns
         self._predictit_feed = PredictItFeed()
 
+        # Opinion — BNB Chain CLOB (requires OPINION_API_KEY env var)
+        self._opinion_feed = OpinionFeed()
+        self._opinion_markets: list[Market] = []
+
+        # Gemini prediction markets — CFTC-regulated, no auth needed for reads
+        self._gemini_feed = GeminiFeed()
+        self._gemini_markets: list[Market] = []
+
+        # Hyperliquid HIP-4 outcome markets — no auth needed
+        self._hyperliquid_feed = HyperliquidFeed()
+        self._hyperliquid_markets: list[Market] = []
+
+        # ProphetX sports exchange via PolyRouter (requires POLYROUTER_API_KEY)
+        self._prophetx_feed = ProphetXFeed()
+        self._prophetx_markets: list[Market] = []
+
         # LLM-powered market matching — enabled when ANTHROPIC_API_KEY is set
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if anthropic_key:
@@ -513,6 +533,10 @@ class Agent:
                     + self._kalshi_markets
                     + self._kalshi_sports_markets
                     + self._pi_markets
+                    + self._opinion_markets
+                    + self._gemini_markets
+                    + self._hyperliquid_markets
+                    + self._prophetx_markets
                 )
 
                 # Reset per-cycle LLM call counter before detection runs
@@ -574,12 +598,30 @@ class Agent:
             "PredictIt", self._predictit_feed.fetch, "_pi_markets",
             pi.get("poll_interval_seconds", 300),
         ))
+        tasks.append(self._feed_loop(
+            "Opinion", self._opinion_feed.fetch, "_opinion_markets",
+            self.cfg.get("opinion", {}).get("poll_interval_seconds", 600),
+        ))
+        tasks.append(self._feed_loop(
+            "Gemini", self._gemini_feed.fetch, "_gemini_markets",
+            self.cfg.get("gemini", {}).get("poll_interval_seconds", 120),
+        ))
+        tasks.append(self._feed_loop(
+            "Hyperliquid", self._hyperliquid_feed.fetch, "_hyperliquid_markets",
+            self.cfg.get("hyperliquid", {}).get("poll_interval_seconds", 60),
+        ))
+        tasks.append(self._feed_loop(
+            "ProphetX", self._prophetx_feed.fetch, "_prophetx_markets",
+            self.cfg.get("prophetx", {}).get("poll_interval_seconds", 300),
+        ))
         log.info("Cycle interval: 30s (detection) | feeds run independently")
         await asyncio.gather(*tasks)
 
     async def teardown(self) -> None:
         for feed in [self._kalshi_feed, self._kalshi_sports_feed,
-                     self._poly_feed, self._predictit_feed]:
+                     self._poly_feed, self._predictit_feed,
+                     self._opinion_feed, self._gemini_feed,
+                     self._hyperliquid_feed, self._prophetx_feed]:
             if feed:
                 try:
                     await feed.close()

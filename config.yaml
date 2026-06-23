@@ -52,6 +52,27 @@ predictit:
   # Direct public API — no auth but rate-limits at sustained high frequency
   poll_interval_seconds: 300  # refresh every 5 min
 
+opinion:
+  # BNB-Chain CLOB — requires OPINION_API_KEY env var (apply at docs.opinion.trade)
+  # 15 req/s rate limit; we fetch top 200 markets by volume + orderbooks
+  poll_interval_seconds: 600  # refresh every 10 min
+
+gemini:
+  # Gemini prediction markets — CFTC-regulated, no auth required for reads
+  # ~300 active binary events across crypto/sports/politics
+  poll_interval_seconds: 120  # refresh every 2 min
+
+hyperliquid:
+  # Hyperliquid HIP-4 outcome markets — no auth required
+  # 3 API calls (outcomeMeta + allMids + spotMetaAndAssetCtxs) per fetch
+  poll_interval_seconds: 60   # refresh every 60s — fast CLOB
+
+prophetx:
+  # ProphetX sports exchange via PolyRouter (requires POLYROUTER_API_KEY env var)
+  # Sign up free at polyrouter.io — 100 req/min
+  # Covers NFL, NBA, MLB, NHL, UFC moneylines vs KalshiSports
+  poll_interval_seconds: 300  # refresh every 5 min
+
 prediction_hunt:
   api_key: "${PREDICTION_HUNT_API_KEY}"
   # 6-hour base interval — Opinion/PredictFun are small platforms; no need to poll often

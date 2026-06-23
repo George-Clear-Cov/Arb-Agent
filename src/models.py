@@ -17,6 +17,8 @@ class Source(str, Enum):
     PREDICTIT = "predictit"
     PROPHETX = "prophetx"
     OPINION = "opinion"
+    GEMINI = "gemini"
+    HYPERLIQUID = "hyperliquid"
     PREDICTFUN = "predictfun"
     MANIFOLD = "manifold"
     ACTION_NETWORK = "action_network"  # FanDuel/Caesars/BetMGM/DK/Pinnacle/bet365/BetRivers/Underdog/Fanatics
