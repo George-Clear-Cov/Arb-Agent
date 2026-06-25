@@ -313,25 +313,39 @@ class Notifier:
             log.warning("Telegram notification failed", exc_info=True)
 
     async def poll_telegram_commands(self, dismiss_fn) -> None:
-        """Long-poll Telegram for /dismiss commands.
+        """Long-poll Telegram for /dismiss and /thresholds commands.
 
         dismiss_fn(arb_id_prefix: str) -> str  — called when user sends /dismiss <id>
         Returns a human-readable result string that gets sent back as a reply.
+
+        Clears any registered webhook on startup so getUpdates long-polling works.
         """
         import httpx
-        updates_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/getUpdates"
-        send_url    = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/sendMessage"
+        base     = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}"
+        send_url = f"{base}/sendMessage"
         last_update_id = 0
 
         async with httpx.AsyncClient(timeout=35.0) as client:
+            # Remove webhook if registered — 409 Conflict otherwise
+            try:
+                await client.post(f"{base}/deleteWebhook", json={"drop_pending_updates": False})
+            except Exception:
+                pass
+
             while True:
                 try:
-                    resp = await client.get(updates_url, params={
+                    resp = await client.get(f"{base}/getUpdates", params={
                         "offset": last_update_id + 1,
                         "timeout": 25,
                         "allowed_updates": ["message"],
-                    })
-                    for update in resp.json().get("result", []):
+                    }, timeout=35.0)
+                    data = resp.json()
+                    if not data.get("ok"):
+                        log.warning("Telegram getUpdates error: %s", data.get("description", ""))
+                        await asyncio.sleep(30)
+                        continue
+
+                    for update in data.get("result", []):
                         last_update_id = update["update_id"]
                         text = (update.get("message") or {}).get("text", "")
                         if text.startswith("/dismiss "):
@@ -349,7 +363,7 @@ class Notifier:
                             lines = [f"{k}: {v:.2f}%" for k, v in self._thresholds.items()]
                             await client.post(send_url, json={
                                 "chat_id": _TELEGRAM_CHAT_ID,
-                                "text": "Current adaptive thresholds:\n" + ("\n".join(lines) or "using defaults"),
+                                "text": "Adaptive thresholds:\n" + ("\n".join(lines) or "using hardcoded defaults (not enough data yet)"),
                             })
                 except Exception as exc:
                     log.warning("Telegram command poll error: %s", exc)
