@@ -135,10 +135,14 @@ class Notifier:
             self._thresholds = {}
 
     def _threshold(self, days: float, sport: str) -> float:
+        default = MIN_MARGIN_PCT if days <= 1 else MIN_MARGIN_PCT_SLOW
         bucket = "game" if days <= 1 else "prediction"
         if bucket in self._thresholds:
-            return self._thresholds[bucket]
-        return MIN_MARGIN_PCT if days <= 1 else MIN_MARGIN_PCT_SLOW
+            # Adaptive threshold can only LOWER the hardcoded default, never raise it.
+            # This prevents the tuner from filtering real arbs when data still
+            # contains spurious cross-platform mismatches (before dismiss loop cleans up).
+            return min(self._thresholds[bucket], default)
+        return default
 
     async def notify_arbs(self, arbs: list[ArbOpportunity]) -> None:
         for arb in arbs:
