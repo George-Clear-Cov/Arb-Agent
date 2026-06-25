@@ -19,7 +19,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
