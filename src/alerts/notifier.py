@@ -332,7 +332,7 @@ class Notifier:
         async with httpx.AsyncClient(timeout=35.0) as client:
             # Remove webhook if registered — 409 Conflict otherwise
             try:
-                await client.post(f"{base}/deleteWebhook", json={"drop_pending_updates": False})
+                await client.post(f"{base}/deleteWebhook", json={"drop_pending_updates": True})
             except Exception:
                 pass
 

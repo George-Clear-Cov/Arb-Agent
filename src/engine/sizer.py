@@ -14,5 +14,7 @@ def kelly_stake(
     on capital at risk), scaled by a conservative fraction to account for
     model error and execution risk.
     """
+    if bankroll <= 0:
+        return 0.0
     raw = bankroll * margin * kelly_fraction
     return round(max(min_stake, min(raw, max_stake)), 2)

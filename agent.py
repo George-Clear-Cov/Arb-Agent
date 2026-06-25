@@ -33,6 +33,7 @@ from src.engine.detector import detect_arbs
 from src.engine.feed_monitor import feed_monitor
 from src.engine.matcher import init_llm_matcher
 from src.engine.sizer import kelly_stake
+from src.engine.threshold_tuner import compute_and_save as _tune_thresholds
 from src.execution.kalshi_exec import KalshiExecutor
 from src.execution.paper_trader import PaperTrader
 from src.execution.polymarket_exec import PolymarketExecutor
@@ -427,11 +428,11 @@ class Agent:
                     log.info("%s: refreshed %d markets", name, len(fresh))
                     if disk_cache:
                         _save_feed_cache(name, fresh)
+                    backoff_mult = 1.0  # reset only on successful non-empty fetch
                 else:
                     feed_monitor.record_success(name, 0)
                     log.warning("%s: returned 0 markets — keeping cache (%d)",
                                 name, len(getattr(self, cache_attr)))
-                backoff_mult = 1.0  # reset on any non-exception result
             except Exception as exc:
                 feed_monitor.record_error(name, str(exc))
                 log.error("%s feed error: %s", name, exc)
@@ -449,6 +450,8 @@ class Agent:
         we don't re-fire the same opportunity on the next detection cycle.
         """
         if not self._executor:
+            return
+        if not self._store:
             return
 
         now    = datetime.now(tz=timezone.utc)
@@ -493,7 +496,9 @@ class Agent:
             # Kelly-sized stake — scales with edge and current bankroll
             pt = self.cfg["paper_trading"]
             bankroll = await self._store.get_balance(pt["starting_balance"])
-            kelly_fraction = 0.15 if arb.sport not in ("prediction",) else 0.25
+            # Game arbs (fast resolution) get higher Kelly; prediction arbs get lower
+            # due to longer horizon and higher model/execution uncertainty
+            kelly_fraction = 0.25 if arb.sport not in ("prediction",) else 0.15
             exec_stake = kelly_stake(
                 margin=arb.margin,
                 bankroll=bankroll,
@@ -541,24 +546,28 @@ class Agent:
                 log.error("AUTO-EXEC HEDGE ALERT: %s", msg)
                 await self._notifier.notify_arbs([arb])
 
-            elif result.partial:
+            elif results and results[0].partial:
                 log.warning(
                     "AUTO-EXEC PARTIAL (rolled back) arb=%s: positions cancelled", arb.id,
                 )
 
             else:
-                log.warning(
-                    "AUTO-EXEC FAILED arb=%s: %s", arb.id, result.error,
-                )
+                err = results[0].error if results else "no executor ran"
+                log.warning("AUTO-EXEC FAILED arb=%s: %s", arb.id, err)
 
     async def _dismiss_arb(self, arb_id_prefix: str) -> str:
         """Handle /dismiss <id> — permanently suppress a false-positive arb pair."""
+        if len(arb_id_prefix) < 6:
+            return f"ID prefix too short (need ≥6 chars, got {len(arb_id_prefix)})"
         arb = await self._store.get_opportunity_by_id_prefix(arb_id_prefix)
         if not arb:
             return f"No arb found with ID prefix '{arb_id_prefix}'"
+        # Update in-memory cache on the LLM matcher (file write deferred to next _save_brain)
         from src.engine.matcher import _llm_matcher as _lm
         if _lm and len(arb.legs) >= 2:
-            _lm.dismiss(arb.legs[0].market_id, arb.legs[1].market_id)
+            x, y = arb.legs[0].market_id, arb.legs[1].market_id
+            key = (x, y) if x <= y else (y, x)
+            _lm._cache[key] = False  # in-memory only; next _save_brain() persists it
         await self._store.permanently_suppress(arb.id)
         log.info("Dismissed arb %s — %s", arb.id, arb.event_name)
         return f"Dismissed '{arb.event_name[:50]}' — will never re-alert"
@@ -584,9 +593,8 @@ class Agent:
                 now_ts = time.time()
                 if now_ts - _last_tuner_run > _TUNER_INTERVAL:
                     loop = asyncio.get_event_loop()
-                    from src.engine.threshold_tuner import compute_and_save
                     new_thresholds = await loop.run_in_executor(
-                        self._detect_executor, compute_and_save
+                        self._detect_executor, _tune_thresholds
                     )
                     if new_thresholds:
                         self._notifier._thresholds = new_thresholds

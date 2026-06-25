@@ -115,8 +115,12 @@ class Store:
         suppress_until = row["suppress_until"]
         last_margin = row["last_margin"] or 0.0
 
-        if suppress_until and datetime.utcnow().isoformat() > suppress_until:
-            return False  # TTL expired — allow re-alert
+        if suppress_until:
+            try:
+                if datetime.fromisoformat(suppress_until) < datetime.utcnow():
+                    return False  # TTL expired — allow re-alert
+            except ValueError:
+                return False  # unparseable timestamp — allow re-alert
 
         if current_margin_pct - last_margin >= 2.0:
             return False  # margin improved significantly — re-alert
@@ -133,7 +137,7 @@ class Store:
                  notified_at = excluded.notified_at,
                  last_margin = excluded.last_margin,
                  suppress_until = excluded.suppress_until,
-                 dismissed = 0""",
+                 dismissed = dismissed""",
             (arb_id, datetime.utcnow().isoformat(), margin_pct, suppress_until),
         )
         await self._db.commit()
