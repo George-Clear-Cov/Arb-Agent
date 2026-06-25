@@ -188,52 +188,55 @@ class KalshiExecutor:
             raise
 
     async def execute_leg(self, leg: ArbLeg, arb_id: str, leg_idx: int) -> OrderResult:
-        """Place a single limit order for one leg of an arb.
+        """Place a single limit order for one leg of an arb (Kalshi v2 order API).
 
-        Polls for a fill up to FILL_TIMEOUT_SECONDS, then cancels if still resting.
+        V2 differences from v1:
+          - Endpoint: POST /portfolio/events/orders (was /portfolio/orders)
+          - side: "bid" (buy YES) or "ask" (buy NO), not "yes"/"no"
+          - price: fixed-point dollar string e.g. "0.7000" (was yes_price int cents)
+          - count: fixed-point string e.g. "10.00" (was plain int)
+          - Required: time_in_force, self_trade_prevention_type
+          - Response: flat object, no {"order": ...} wrapper
+          - Fill status: "executed" (was "filled")
         """
-        side = leg.outcome_name.lower()  # "yes" or "no"
+        # v2 single-book: bid = buy YES, ask = sell YES (= buy NO)
+        side_v2 = "bid" if leg.outcome_name.lower() == "yes" else "ask"
 
-        # Convert decimal odds to cent price.  leg.price is raw odds (e.g. 1.4286
-        # for 70-cent YES).  implied_prob = 1/price.
         implied_prob = 1.0 / leg.price
-        price_cents  = round(implied_prob * 100)
-        price_cents  = max(1, min(99, price_cents))
+        price_cents  = max(1, min(99, round(implied_prob * 100)))
+        price_fp     = f"{price_cents / 100:.4f}"          # "0.7000"
 
-        # Number of contracts.  Each costs price_cents/100 dollars; pays $1 on win.
-        count = max(1, round(leg.stake * 100 / price_cents))
+        count    = max(1, round(leg.stake * 100 / price_cents))
+        count_fp = f"{count}.00"                            # "10.00"
 
         client_order_id = f"arb-{arb_id}-leg{leg_idx}-{uuid.uuid4().hex[:6]}"
 
         order_body: dict = {
-            "ticker":          leg.market_id,
-            "client_order_id": client_order_id,
-            "type":            "limit",
-            "action":          "buy",
-            "side":            side,
-            "count":           count,
+            "ticker":                      leg.market_id,
+            "client_order_id":             client_order_id,
+            "side":                        side_v2,
+            "count":                       count_fp,
+            "price":                       price_fp,
+            "time_in_force":               "good_till_canceled",
+            "self_trade_prevention_type":  "taker_at_cross",
         }
-        if side == "yes":
-            order_body["yes_price"] = price_cents
-        else:
-            order_body["no_price"] = price_cents
 
         result = OrderResult(
             leg_idx=leg_idx,
             market_id=leg.market_id,
-            side=side,
+            side=side_v2,
             count=count,
             price_cents=price_cents,
             client_order_id=client_order_id,
         )
 
         log.info(
-            "Placing Kalshi order: %s %s %d contracts @ %d¢  (stake $%.2f arb=%s)",
-            leg.market_id, side.upper(), count, price_cents, leg.stake, arb_id,
+            "Placing Kalshi v2 order: %s %s %d contracts @ %s  (stake $%.2f arb=%s)",
+            leg.market_id, side_v2.upper(), count, price_fp, leg.stake, arb_id,
         )
 
         try:
-            data = await self._post("/portfolio/orders", order_body)
+            data = await self._post("/portfolio/events/orders", order_body)
         except httpx.HTTPStatusError as e:
             result.status = "error"
             result.error  = f"HTTP {e.response.status_code}: {e.response.text}"
@@ -246,26 +249,33 @@ class KalshiExecutor:
             return result
 
         result.raw_response = data
-        order = data.get("order", {})
-        result.order_id = order.get("order_id") or order.get("id")
-        result.status   = order.get("status", "resting")
-        result.filled_count = order.get("filled_count") or order.get("num_fills", 0)
 
-        if result.status == "filled":
+        # v2 response is flat (not wrapped in {"order": ...})
+        result.order_id = data.get("order_id")
+        fill_count  = _parse_fp(data.get("fill_count", "0"))
+        remaining   = _parse_fp(data.get("remaining_count", count_fp))
+
+        result.filled_count = fill_count
+        if fill_count >= count:
+            result.status = "filled"
             log.info(
                 "Kalshi order %s filled immediately: %s %s %d contracts",
-                result.order_id, leg.market_id, side.upper(), count,
+                result.order_id, leg.market_id, side_v2.upper(), count,
             )
             return result
+        result.status = "partially_filled" if fill_count > 0 else "resting"
 
-        # Poll for fill
         if result.order_id:
             result = await self._poll_fill(result)
 
         return result
 
     async def _poll_fill(self, result: OrderResult) -> OrderResult:
-        """Poll /portfolio/orders/{id} until filled, timeout, or error."""
+        """Poll /portfolio/orders/{id} until filled, timeout, or error.
+
+        V2 status values: "resting", "canceled", "executed" (= filled in v1).
+        Fill count returned as "fill_count_fp" (fixed-point string).
+        """
         deadline = time.monotonic() + FILL_TIMEOUT_SECONDS
 
         while time.monotonic() < deadline:
@@ -273,8 +283,14 @@ class KalshiExecutor:
             try:
                 data  = await self.get_order(result.order_id)
                 order = data.get("order", data)
-                result.status       = order.get("status", result.status)
-                result.filled_count = order.get("filled_count") or order.get("num_fills", result.filled_count)
+                raw_status = order.get("status", result.status)
+                # v2 calls a full fill "executed"; normalise to "filled"
+                result.status = "filled" if raw_status == "executed" else raw_status
+                fill_fp = (order.get("fill_count_fp")
+                           or order.get("fill_count")
+                           or order.get("filled_count"))
+                if fill_fp is not None:
+                    result.filled_count = _parse_fp(str(fill_fp))
             except Exception as e:
                 log.warning("poll_fill %s: %s", result.order_id, e)
                 continue
@@ -424,6 +440,16 @@ class KalshiExecutor:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _parse_fp(s: str | int | float | None) -> int:
+    """Parse a Kalshi v2 fixed-point string to an integer contract count."""
+    if s is None:
+        return 0
+    try:
+        return round(float(s))
+    except (ValueError, TypeError):
+        return 0
+
 
 def _scale_leg(leg: ArbLeg, scale: float) -> ArbLeg:
     from src.models import ArbLeg as AL
