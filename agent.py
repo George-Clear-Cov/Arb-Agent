@@ -32,6 +32,7 @@ from src.dashboard.app import app, is_kill_switch_active, set_store, update_stat
 from src.engine.detector import detect_arbs
 from src.engine.feed_monitor import feed_monitor
 from src.engine.matcher import init_llm_matcher
+from src.engine.sizer import kelly_stake
 from src.execution.kalshi_exec import KalshiExecutor
 from src.execution.paper_trader import PaperTrader
 from src.execution.polymarket_exec import PolymarketExecutor
@@ -234,7 +235,8 @@ class Agent:
         self._exec_dry_run         = exec_cfg.get("dry_run", False)
         self._executor: KalshiExecutor | None = None
         self._poly_executor: PolymarketExecutor | None = None
-        self._executed_arb_ids: set[str] = set()  # prevents re-firing same arb each cycle
+        self._executed_arb_ids: set[str] = set()  # persisted to disk; prevents re-fire on restart
+        self._exec_ids_file = _STATE_DIR / "executed_ids.json"
 
         # Daily loss tracking
         self._day_start_balance: float | None = None
@@ -268,6 +270,14 @@ class Agent:
         )
 
         set_store(self._store, self._trader)
+
+        # Load persisted executed arb IDs so we don't re-fire on restart
+        try:
+            if self._exec_ids_file.exists():
+                self._executed_arb_ids = set(json.loads(self._exec_ids_file.read_text()))
+                log.info("Loaded %d executed arb IDs from disk", len(self._executed_arb_ids))
+        except Exception as exc:
+            log.warning("Could not load executed_ids.json: %s", exc)
 
         # Dedicated ThreadPoolExecutor for arb detection.  The OddsAPI fast path
         # (event_id grouping) reduces detection time to ~100ms, so GIL contention
@@ -390,8 +400,12 @@ class Agent:
         (fresher than `interval` seconds) and skip the API call if found.
         After every successful fetch the result is persisted to disk.
         This prevents restarts from burning expensive API quota.
+
+        Adaptive backoff: consecutive errors multiply the sleep by 2x up to 8x,
+        so a broken feed backs off gracefully instead of hammering a down API.
         """
         log.info("Feed loop started: %s (every %ds)", name, interval)
+        backoff_mult = 1.0
 
         # On startup, try disk cache first to avoid burning API quota
         if disk_cache:
@@ -399,7 +413,6 @@ class Agent:
             if cached:
                 setattr(self, cache_attr, cached)
                 feed_monitor.record_success(name, len(cached))
-                # Sleep for the remaining time before next fetch
                 cache_age = time.time() - _cache_path(name).stat().st_mtime
                 wait = max(0, interval - cache_age)
                 log.info("%s: using disk cache, next fetch in %.0fs", name, wait)
@@ -418,10 +431,15 @@ class Agent:
                     feed_monitor.record_success(name, 0)
                     log.warning("%s: returned 0 markets — keeping cache (%d)",
                                 name, len(getattr(self, cache_attr)))
+                backoff_mult = 1.0  # reset on any non-exception result
             except Exception as exc:
                 feed_monitor.record_error(name, str(exc))
                 log.error("%s feed error: %s", name, exc)
-            await asyncio.sleep(interval)
+                backoff_mult = min(backoff_mult * 2.0, 8.0)
+                if backoff_mult > 1.0:
+                    log.warning("%s: backing off — next fetch in %.0fs", name,
+                                interval * backoff_mult)
+            await asyncio.sleep(interval * backoff_mult)
 
     async def _auto_execute(self, arbs: list) -> None:
         """Fire real Kalshi orders for qualifying arbs.
@@ -459,8 +477,12 @@ class Agent:
             if not any(leg.source in kalshi_sources for leg in arb.legs):
                 continue
 
-            # Mark as seen before firing — prevents races if detection runs again
+            # Mark as seen before firing — persisted to disk to survive restarts
             self._executed_arb_ids.add(arb.id)
+            try:
+                self._exec_ids_file.write_text(json.dumps(list(self._executed_arb_ids)))
+            except Exception:
+                pass
 
             log.info(
                 "AUTO-EXEC: firing arb %s | %.1f%% margin | $%.2f stake | expires %s",
@@ -468,17 +490,32 @@ class Agent:
                 arb.expires_at.strftime("%Y-%m-%d") if arb.expires_at else "?",
             )
 
+            # Kelly-sized stake — scales with edge and current bankroll
+            pt = self.cfg["paper_trading"]
+            bankroll = await self._store.get_balance(pt["starting_balance"])
+            kelly_fraction = 0.15 if arb.sport not in ("prediction",) else 0.25
+            exec_stake = kelly_stake(
+                margin=arb.margin,
+                bankroll=bankroll,
+                kelly_fraction=kelly_fraction,
+                max_stake=self._exec_max_stake,
+            )
+            log.info(
+                "AUTO-EXEC Kelly stake: $%.2f (margin=%.1f%% bankroll=$%.0f k=%.2f)",
+                exec_stake, arb.margin * 100, bankroll, kelly_fraction,
+            )
+
             # Execute each platform's legs with the right executor
             results = []
             try:
                 if self._executor:
                     r = await self._executor.execute_arb(
-                        arb, max_stake=self._exec_max_stake, dry_run=self._exec_dry_run,
+                        arb, max_stake=exec_stake, dry_run=self._exec_dry_run,
                     )
                     results.append(r)
                 if self._poly_executor:
                     r = await self._poly_executor.execute_arb(
-                        arb, max_stake=self._exec_max_stake, dry_run=self._exec_dry_run,
+                        arb, max_stake=exec_stake, dry_run=self._exec_dry_run,
                     )
                     results.append(r)
             except Exception as exc:
@@ -514,6 +551,18 @@ class Agent:
                     "AUTO-EXEC FAILED arb=%s: %s", arb.id, result.error,
                 )
 
+    async def _dismiss_arb(self, arb_id_prefix: str) -> str:
+        """Handle /dismiss <id> — permanently suppress a false-positive arb pair."""
+        arb = await self._store.get_opportunity_by_id_prefix(arb_id_prefix)
+        if not arb:
+            return f"No arb found with ID prefix '{arb_id_prefix}'"
+        from src.engine.matcher import _llm_matcher as _lm
+        if _lm and len(arb.legs) >= 2:
+            _lm.dismiss(arb.legs[0].market_id, arb.legs[1].market_id)
+        await self._store.permanently_suppress(arb.id)
+        log.info("Dismissed arb %s — %s", arb.id, arb.event_name)
+        return f"Dismissed '{arb.event_name[:50]}' — will never re-alert"
+
     async def detect_loop(self) -> None:
         """Arb detection loop — wakes on WS price change OR 30s timeout."""
         log.info("Waiting for initial feed data...")
@@ -521,12 +570,27 @@ class Agent:
             await asyncio.sleep(2)
         log.info("Initial data ready — starting arb detection (WS-driven + 30s fallback)")
 
+        _last_tuner_run: float = 0.0
+        _TUNER_INTERVAL = 86400  # re-tune thresholds once per day
+
         while True:
             try:
                 if is_kill_switch_active() or await self._check_daily_loss_limit():
                     self._price_event.clear()
                     await asyncio.sleep(30)
                     continue
+
+                # Run threshold tuner daily in a thread (sync sqlite query)
+                now_ts = time.time()
+                if now_ts - _last_tuner_run > _TUNER_INTERVAL:
+                    loop = asyncio.get_event_loop()
+                    from src.engine.threshold_tuner import compute_and_save
+                    new_thresholds = await loop.run_in_executor(
+                        self._detect_executor, compute_and_save
+                    )
+                    if new_thresholds:
+                        self._notifier._thresholds = new_thresholds
+                    _last_tuner_run = now_ts
 
                 markets = (
                     self._poly_markets
@@ -614,6 +678,7 @@ class Agent:
             "ProphetX", self._prophetx_feed.fetch, "_prophetx_markets",
             self.cfg.get("prophetx", {}).get("poll_interval_seconds", 300),
         ))
+        tasks.append(self._notifier.poll_telegram_commands(self._dismiss_arb))
         log.info("Cycle interval: 30s (detection) | feeds run independently")
         await asyncio.gather(*tasks)
 

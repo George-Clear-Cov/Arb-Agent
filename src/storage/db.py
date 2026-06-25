@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
@@ -36,7 +36,10 @@ class Store:
         await self._db.executescript("""
             CREATE TABLE IF NOT EXISTS notified_arbs (
                 arb_id TEXT PRIMARY KEY,
-                notified_at TEXT NOT NULL
+                notified_at TEXT NOT NULL,
+                last_margin REAL DEFAULT NULL,
+                suppress_until TEXT DEFAULT NULL,
+                dismissed INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS balance (
@@ -52,7 +55,9 @@ class Store:
                 margin REAL,
                 total_stake REAL,
                 legs_json TEXT,
-                detected_at TEXT
+                detected_at TEXT,
+                first_detected_at TEXT,
+                detection_count INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS paper_positions (
@@ -67,19 +72,78 @@ class Store:
                 settled_at TEXT
             );
         """)
+        await self._migrate()
         await self._db.commit()
+
+    async def _migrate(self) -> None:
+        """Add columns absent in older DB versions; ignore if they already exist."""
+        for sql in [
+            "ALTER TABLE notified_arbs ADD COLUMN last_margin REAL DEFAULT NULL",
+            "ALTER TABLE notified_arbs ADD COLUMN suppress_until TEXT DEFAULT NULL",
+            "ALTER TABLE notified_arbs ADD COLUMN dismissed INTEGER DEFAULT 0",
+            "ALTER TABLE arb_opportunities ADD COLUMN first_detected_at TEXT",
+            "ALTER TABLE arb_opportunities ADD COLUMN detection_count INTEGER DEFAULT 1",
+        ]:
+            try:
+                await self._db.execute(sql)
+            except Exception:
+                pass
 
     # ── Notification dedup ─────────────────────────────────────────────────
 
-    async def has_notified(self, arb_id: str) -> bool:
-        async with self._db.execute(
-            "SELECT 1 FROM notified_arbs WHERE arb_id = ?", (arb_id,)
-        ) as cur:
-            return await cur.fetchone() is not None
+    async def has_notified(self, arb_id: str, current_margin_pct: float = 0.0) -> bool:
+        """Return True if the alert should be suppressed.
 
-    async def mark_notified(self, arb_id: str) -> None:
+        Suppression lifts when:
+        - suppress_until TTL has passed (allows periodic re-alerting)
+        - margin improved by >2% since last notification (better arb deserves attention)
+
+        Permanent dismissals (dismissed=1) are never re-alerted.
+        """
+        async with self._db.execute(
+            "SELECT last_margin, suppress_until, dismissed FROM notified_arbs WHERE arb_id = ?",
+            (arb_id,),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row is None:
+            return False  # never notified
+
+        if row["dismissed"]:
+            return True  # user explicitly dismissed — permanent
+
+        suppress_until = row["suppress_until"]
+        last_margin = row["last_margin"] or 0.0
+
+        if suppress_until and datetime.utcnow().isoformat() > suppress_until:
+            return False  # TTL expired — allow re-alert
+
+        if current_margin_pct - last_margin >= 2.0:
+            return False  # margin improved significantly — re-alert
+
+        return True  # within suppression window, no improvement
+
+    async def mark_notified(self, arb_id: str, margin_pct: float = 0.0,
+                            suppress_hours: float = 48.0) -> None:
+        suppress_until = (datetime.utcnow() + timedelta(hours=suppress_hours)).isoformat()
         await self._db.execute(
-            "INSERT OR IGNORE INTO notified_arbs (arb_id, notified_at) VALUES (?, ?)",
+            """INSERT INTO notified_arbs (arb_id, notified_at, last_margin, suppress_until, dismissed)
+               VALUES (?, ?, ?, ?, 0)
+               ON CONFLICT(arb_id) DO UPDATE SET
+                 notified_at = excluded.notified_at,
+                 last_margin = excluded.last_margin,
+                 suppress_until = excluded.suppress_until,
+                 dismissed = 0""",
+            (arb_id, datetime.utcnow().isoformat(), margin_pct, suppress_until),
+        )
+        await self._db.commit()
+
+    async def permanently_suppress(self, arb_id: str) -> None:
+        """Mark an arb as user-dismissed — never re-alert."""
+        await self._db.execute(
+            """INSERT INTO notified_arbs (arb_id, notified_at, dismissed)
+               VALUES (?, ?, 1)
+               ON CONFLICT(arb_id) DO UPDATE SET dismissed = 1""",
             (arb_id, datetime.utcnow().isoformat()),
         )
         await self._db.commit()
@@ -117,15 +181,30 @@ class Store:
             }
             for l in arb.legs
         ])
+        now = arb.detected_at.isoformat()
         await self._db.execute(
-            """INSERT OR REPLACE INTO arb_opportunities
-               (id, sport, event_name, market_type, margin, total_stake, legs_json, detected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO arb_opportunities
+               (id, sport, event_name, market_type, margin, total_stake, legs_json,
+                detected_at, first_detected_at, detection_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+               ON CONFLICT(id) DO UPDATE SET
+                 margin = excluded.margin,
+                 total_stake = excluded.total_stake,
+                 legs_json = excluded.legs_json,
+                 detected_at = excluded.detected_at,
+                 detection_count = detection_count + 1""",
             (arb.id, arb.sport, arb.event_name, arb.market_type,
-             arb.margin, arb.total_stake, legs_json,
-             arb.detected_at.isoformat()),
+             arb.margin, arb.total_stake, legs_json, now, now),
         )
         await self._db.commit()
+
+    async def get_opportunity_by_id_prefix(self, prefix: str) -> ArbOpportunity | None:
+        async with self._db.execute(
+            "SELECT * FROM arb_opportunities WHERE id LIKE ? ORDER BY detected_at DESC LIMIT 1",
+            (prefix + "%",),
+        ) as cur:
+            row = await cur.fetchone()
+        return _row_to_arb(row) if row else None
 
     async def get_recent_opportunities(self, limit: int = 50) -> list[ArbOpportunity]:
         async with self._db.execute(

@@ -96,6 +96,33 @@ class LLMMarketMatcher:
         except Exception as exc:
             log.warning("LLM brain save failed: %s", exc)
 
+    def dismiss(self, market_id_a: str, market_id_b: str) -> None:
+        """Permanently mark a pair as non-matching (user feedback via /dismiss)."""
+        x, y = market_id_a, market_id_b
+        key = (x, y) if x <= y else (y, x)
+        self._cache[key] = False
+        try:
+            try:
+                with open(_BRAIN_FILE) as f:
+                    data = json.load(f)
+            except Exception:
+                data = {"version": 1, "entries": {}}
+            key_str = f"{key[0]}__{key[1]}"
+            data["entries"][key_str] = {
+                "result": False,
+                "user_dismissed": True,
+                "saved_at": time.time(),
+                "expires_at": None,
+            }
+            _BRAIN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = str(_BRAIN_FILE) + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, separators=(",", ":"))
+            os.replace(tmp, _BRAIN_FILE)
+            log.info("Dismissed pair %s × %s (permanent)", market_id_a, market_id_b)
+        except Exception as exc:
+            log.warning("Brain dismiss write failed: %s", exc)
+
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
     def reset_cycle(self) -> None:

@@ -25,9 +25,13 @@ _GMAIL_USER       = os.environ.get("GMAIL_USER", "")
 _GMAIL_APP_PASS   = os.environ.get("GMAIL_APP_PASSWORD", "")
 _SMS_GATEWAY      = os.environ.get("SMS_GATEWAY", "7183138104@tmomail.net")
 
+# Hardcoded defaults — overridden at runtime by adaptive threshold tuner
 MIN_MARGIN_PCT      = 2.0   # <1 day expiry (game arbs)
 MIN_MARGIN_PCT_SLOW = 2.5   # 1-30 day expiry (prediction markets)
 MAX_DAYS            = 30
+
+# Margin improvement required to re-alert on a previously notified arb
+_MARGIN_REJUMP_PCT  = 2.0
 
 
 def _days_left(expires_at: datetime) -> float:
@@ -119,6 +123,22 @@ class Notifier:
         self.min_margin = min_margin
         self._slack_webhook = slack_webhook
         self._store = store
+        # Adaptive thresholds — loaded from brain/thresholds.json, fall back to constants
+        self._thresholds: dict = {}
+        self._reload_thresholds()
+
+    def _reload_thresholds(self) -> None:
+        try:
+            from src.engine.threshold_tuner import load
+            self._thresholds = load()
+        except Exception:
+            self._thresholds = {}
+
+    def _threshold(self, days: float, sport: str) -> float:
+        bucket = "game" if days <= 1 else "prediction"
+        if bucket in self._thresholds:
+            return self._thresholds[bucket]
+        return MIN_MARGIN_PCT if days <= 1 else MIN_MARGIN_PCT_SLOW
 
     async def notify_arbs(self, arbs: list[ArbOpportunity]) -> None:
         for arb in arbs:
@@ -127,14 +147,15 @@ class Notifier:
             days = _days_left(arb.expires_at)
             if days <= 0 or days > MAX_DAYS:
                 continue
-            threshold = MIN_MARGIN_PCT if days <= 1 else MIN_MARGIN_PCT_SLOW
-            if arb.margin * 100 < threshold:
+            margin_pct = arb.margin * 100
+            if margin_pct < self._threshold(days, arb.sport):
                 continue
 
-            if self._store and await self._store.has_notified(arb.id):
+            if self._store and await self._store.has_notified(arb.id, margin_pct):
                 continue
             if self._store:
-                await self._store.mark_notified(arb.id)
+                suppress_hours = 12.0 if days <= 1 else 48.0
+                await self._store.mark_notified(arb.id, margin_pct, suppress_hours)
 
             self._log_arb(arb)
             _mac_notify(
@@ -265,6 +286,7 @@ class Notifier:
                     f"Platforms: {sources}\n\n"
                     + "\n".join(leg_lines)
                     + f"\n\n💰 Put in <b>${arb.total_stake:.0f}</b>  →  lock in <b>${arb.profit:.0f}</b>"
+                    + f"\n<code>/dismiss {arb.id[:8]}</code>"
                 )
 
                 await client.post(api_url, json={
@@ -289,3 +311,46 @@ class Notifier:
 
         except Exception:
             log.warning("Telegram notification failed", exc_info=True)
+
+    async def poll_telegram_commands(self, dismiss_fn) -> None:
+        """Long-poll Telegram for /dismiss commands.
+
+        dismiss_fn(arb_id_prefix: str) -> str  — called when user sends /dismiss <id>
+        Returns a human-readable result string that gets sent back as a reply.
+        """
+        import httpx
+        updates_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/getUpdates"
+        send_url    = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/sendMessage"
+        last_update_id = 0
+
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            while True:
+                try:
+                    resp = await client.get(updates_url, params={
+                        "offset": last_update_id + 1,
+                        "timeout": 25,
+                        "allowed_updates": ["message"],
+                    })
+                    for update in resp.json().get("result", []):
+                        last_update_id = update["update_id"]
+                        text = (update.get("message") or {}).get("text", "")
+                        if text.startswith("/dismiss "):
+                            prefix = text.split(None, 1)[1].strip()
+                            try:
+                                msg = await dismiss_fn(prefix)
+                            except Exception as exc:
+                                msg = f"Error: {exc}"
+                            await client.post(send_url, json={
+                                "chat_id": _TELEGRAM_CHAT_ID,
+                                "text": f"✅ {msg}",
+                            })
+                        elif text == "/thresholds":
+                            self._reload_thresholds()
+                            lines = [f"{k}: {v:.2f}%" for k, v in self._thresholds.items()]
+                            await client.post(send_url, json={
+                                "chat_id": _TELEGRAM_CHAT_ID,
+                                "text": "Current adaptive thresholds:\n" + ("\n".join(lines) or "using defaults"),
+                            })
+                except Exception as exc:
+                    log.warning("Telegram command poll error: %s", exc)
+                    await asyncio.sleep(10)
