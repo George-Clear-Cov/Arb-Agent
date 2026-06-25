@@ -25,8 +25,8 @@ _GMAIL_USER       = os.environ.get("GMAIL_USER", "")
 _GMAIL_APP_PASS   = os.environ.get("GMAIL_APP_PASSWORD", "")
 _SMS_GATEWAY      = os.environ.get("SMS_GATEWAY", "7183138104@tmomail.net")
 
-MIN_MARGIN_PCT      = 5.0
-MIN_MARGIN_PCT_SLOW = 10.0
+MIN_MARGIN_PCT      = 2.0   # <1 day expiry (game arbs)
+MIN_MARGIN_PCT_SLOW = 2.5   # 1-30 day expiry (prediction markets)
 MAX_DAYS            = 30
 
 
