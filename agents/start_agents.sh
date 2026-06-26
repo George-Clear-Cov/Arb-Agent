@@ -8,29 +8,32 @@ cd "$(dirname "$0")/.."
 VENV=".venv/bin/python"
 LOGS="/tmp"
 
-echo "Starting all agents..."
-
-# Kill any existing agent processes
-pkill -f "agents/matcher_agent.py" 2>/dev/null || true
-pkill -f "agents/monitor_agent.py" 2>/dev/null || true
-pkill -f "agents/audit_agent.py"   2>/dev/null || true
-
+echo "Stopping existing agents..."
+pkill -f "agents/matcher_agent.py"    2>/dev/null || true
+pkill -f "agents/monitor_agent.py"    2>/dev/null || true
+pkill -f "agents/audit_agent.py"      2>/dev/null || true
+pkill -f "agents/price_delta_agent.py" 2>/dev/null || true
+pkill -f "agents/position_settler.py" 2>/dev/null || true
+pkill -f "agents/health_watchdog.py"  2>/dev/null || true
+pkill -f "agents/brain_decay.py"      2>/dev/null || true
 sleep 1
 
-# Matcher Agent — LLM market matching loop
-nohup $VENV agents/matcher_agent.py >> $LOGS/matcher-agent.log 2>&1 &
-echo "Matcher agent PID: $!"
+echo "Starting agents..."
 
-# Monitor Agent — per-pair arb detection
-nohup $VENV agents/monitor_agent.py >> $LOGS/monitor-agent.log 2>&1 &
-echo "Monitor agent PID: $!"
-
-# Audit Agent — runs once on startup then every hour
-nohup $VENV agents/audit_agent.py >> $LOGS/audit-agent.log 2>&1 &
-echo "Audit agent PID: $!"
+nohup $VENV agents/matcher_agent.py     >> $LOGS/matcher-agent.log     2>&1 & echo "matcher:       $!"
+nohup $VENV agents/monitor_agent.py     >> $LOGS/monitor-agent.log     2>&1 & echo "monitor:       $!"
+nohup $VENV agents/price_delta_agent.py >> $LOGS/price-delta-agent.log 2>&1 & echo "price_delta:   $!"
+nohup $VENV agents/position_settler.py  >> $LOGS/position-settler.log  2>&1 & echo "position:      $!"
+nohup $VENV agents/health_watchdog.py   >> $LOGS/health-watchdog.log   2>&1 & echo "watchdog:      $!"
+nohup $VENV agents/brain_decay.py       >> $LOGS/brain-decay.log       2>&1 & echo "brain_decay:   $!"
+nohup $VENV agents/audit_agent.py       >> $LOGS/audit-agent.log       2>&1 & echo "audit:         $!"
 
 echo ""
-echo "Logs:"
-echo "  Matcher:  tail -f $LOGS/matcher-agent.log"
-echo "  Monitor:  tail -f $LOGS/monitor-agent.log"
-echo "  Audit:    tail -f $LOGS/audit-agent.log"
+echo "All agents started. Logs:"
+echo "  tail -f $LOGS/matcher-agent.log"
+echo "  tail -f $LOGS/monitor-agent.log"
+echo "  tail -f $LOGS/price-delta-agent.log"
+echo "  tail -f $LOGS/position-settler.log"
+echo "  tail -f $LOGS/health-watchdog.log"
+echo "  tail -f $LOGS/brain-decay.log"
+echo "  tail -f $LOGS/audit-agent.log"
