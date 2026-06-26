@@ -87,7 +87,7 @@ class GeminiFeed:
         vol_str = event.get("volume24h") or event.get("volume")
         vol = float(vol_str) if vol_str else None
         category = event.get("category", "")
-        sport = _category_to_sport(category)
+        sport = _category_to_sport(category, event.get("title", ""))
         commence = _parse_dt(event.get("startTime") or expiry)
 
         markets: list[Market] = []
@@ -186,13 +186,40 @@ class GeminiFeed:
         await self._client.aclose()
 
 
-def _category_to_sport(category: str) -> str:
-    return {
-        "Crypto": "prediction",
-        "Politics": "prediction",
-        "Sports": "sports",
-        "Entertainment": "prediction",
-    }.get(category, "prediction")
+_GEMINI_SPORT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("soccer",     ["world cup", "fifa", "mls", "epl", "premier league", "soccer",
+                    "champions league", "la liga", "bundesliga", "serie a", "concacaf",
+                    " vs ", "draw", "goals scored", "clean sheet", "btts"]),
+    ("basketball", ["nba", "basketball"]),
+    ("baseball",   ["mlb", "baseball", "world series"]),
+    ("football",   ["nfl", "super bowl", "football"]),
+    ("hockey",     ["nhl", "stanley cup", "hockey"]),
+    ("tennis",     ["wimbledon", "french open", "us open", "australian open", "atp", "wta"]),
+    ("golf",       ["masters", "pga", "golf", "open championship", "ryder cup",
+                    "travelers championship", "us open golf"]),
+    ("f1",         ["formula 1", "formula one", "grand prix", "f1"]),
+    ("mma",        ["ufc", "mma"]),
+    ("boxing",     ["boxing"]),
+    ("esports",    ["esports", "league of legends", "cs2", "counter-strike", "valorant"]),
+    ("crypto",     ["btc", "bitcoin", "eth", "ethereum", "sol", "solana", "xrp",
+                    "price on", "price above", "price below", "crypto"]),
+    ("economics",  ["cpi", "inflation", "fed rate", "interest rate", "unemployment",
+                    "gdp", "recession", "fomc", "rate cut", "rate hike"]),
+]
+
+
+def _category_to_sport(category: str, title: str = "") -> str:
+    if category == "Crypto":
+        return "crypto"
+    if category in ("Politics",):
+        return "prediction"
+    if category in ("Sports", "Entertainment") or True:
+        # Sub-classify by title keywords
+        tl = title.lower()
+        for sport, kws in _GEMINI_SPORT_KEYWORDS:
+            if any(kw in tl for kw in kws):
+                return sport
+    return "prediction"
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:

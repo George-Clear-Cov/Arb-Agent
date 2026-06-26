@@ -46,23 +46,36 @@ _JSON_RE      = re.compile(r'\[[\s\w,]+\]')
 # Sports to compare between each platform pair
 SPORT_PAIRS: list[tuple[str, str, str]] = [
     # (sport, source_a_cache, source_b_cache)
-    # Economics — highest priority for short-term arbs (CPI, Fed, GDP releases)
+
+    # ── Economics (highest priority — CPI/Fed expire in days) ────────────────
     ("economics",  "kalshi_cache",        "polymarket_cache"),
     ("economics",  "kalshi_cache",        "predictit_cache"),
-    # Soccer
+    ("economics",  "gemini_cache",        "kalshi_cache"),
+
+    # ── Soccer — World Cup live right now ────────────────────────────────────
+    ("soccer",     "gemini_cache",        "polymarket_cache"),   # USA vs Turkiye TODAY
+    ("soccer",     "gemini_cache",        "kalshi_cache"),
     ("soccer",     "polymarket_cache",    "kalshi_cache"),
     ("soccer",     "polymarket_cache",    "kalshi_sports_cache"),
-    # Baseball
+
+    # ── Crypto (Gemini/Hyperliquid price markets vs Polymarket) ─────────────
+    ("crypto",     "gemini_cache",        "polymarket_cache"),
+    ("crypto",     "gemini_cache",        "kalshi_cache"),
+    ("crypto",     "hyperliquid_cache",   "polymarket_cache"),
+    ("crypto",     "hyperliquid_cache",   "kalshi_cache"),
+
+    # ── Other sports ─────────────────────────────────────────────────────────
+    ("golf",       "gemini_cache",        "polymarket_cache"),
     ("baseball",   "polymarket_cache",    "kalshi_sports_cache"),
     ("baseball",   "polymarket_cache",    "kalshi_cache"),
-    # Other sports
     ("tennis",     "polymarket_cache",    "kalshi_sports_cache"),
+    ("mma",        "gemini_cache",        "polymarket_cache"),
     ("mma",        "polymarket_cache",    "kalshi_sports_cache"),
     ("basketball", "polymarket_cache",    "kalshi_sports_cache"),
     ("f1",         "polymarket_cache",    "kalshi_sports_cache"),
-    # Prediction
+
+    # ── Prediction ───────────────────────────────────────────────────────────
     ("prediction", "polymarket_cache",    "predictit_cache"),
-    ("prediction", "polymarket_cache",    "gemini_cache"),
     ("prediction", "kalshi_cache",        "predictit_cache"),
     ("prediction", "kalshi_cache",        "gemini_cache"),
     ("prediction", "polymarket_cache",    "hyperliquid_cache"),
@@ -270,6 +283,46 @@ def ask_llm_prediction(client: anthropic.Anthropic,
     return [False] * len(pairs)
 
 
+def ask_llm_crypto(client: anthropic.Anthropic,
+                   pairs: list[tuple[dict, dict]]) -> list[bool]:
+    """Ask Claude whether each pair of crypto markets measures the exact same price outcome."""
+    lines = []
+    for i, (a, b) in enumerate(pairs, 1):
+        lines.append(f"Pair {i}:")
+        lines.append(f"  A: \"{a['event_name']}\"")
+        lines.append(f"  B: \"{b['event_name']}\"")
+
+    prompt = (
+        "You are a crypto markets expert. For each pair determine if both markets "
+        "resolve on the EXACT SAME outcome: same asset, same price threshold, same date.\n\n"
+        "Rules:\n"
+        "- 'BTC above $70k by July 1' vs 'Bitcoin over $70,000 on July 1' = TRUE\n"
+        "- 'SOL price on June 26: $68 or above' vs 'SOL above $68 June 26' = TRUE\n"
+        "- 'ETH above $3000 by July 1' vs 'ETH above $3500 by July 1' = FALSE (different threshold)\n"
+        "- Different assets (BTC vs ETH) = always FALSE\n\n"
+        + "\n".join(lines)
+        + "\n\nRespond with ONLY a JSON array of booleans. Example: [true, false, true]"
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        m = _JSON_RE.search(text)
+        if m:
+            text = m.group(0)
+        parsed = json.loads(text)
+        if isinstance(parsed, list) and len(parsed) == len(pairs):
+            matched = sum(1 for v in parsed if v)
+            log.info("LLM crypto: %d/%d pairs matched", matched, len(pairs))
+            return [bool(v) for v in parsed]
+    except Exception as exc:
+        log.warning("LLM crypto call failed: %s", exc)
+    return [False] * len(pairs)
+
+
 def ask_llm_economics(client: anthropic.Anthropic,
                       pairs: list[tuple[dict, dict]]) -> list[bool]:
     """Ask Claude whether each pair of economic markets measures the EXACT same outcome.
@@ -394,6 +447,8 @@ def run_cycle(client: anthropic.Anthropic) -> int:
             if needs_llm:
                 if sport == "economics":
                     results = ask_llm_economics(client, needs_llm)
+                elif sport == "crypto":
+                    results = ask_llm_crypto(client, needs_llm)
                 elif sport == "prediction":
                     results = ask_llm_prediction(client, needs_llm)
                 else:
