@@ -16,6 +16,7 @@ from typing import Optional
 
 import httpx
 
+from src.feeds.feed_cache import CACHE_DIR, load_cache, save_cache
 from src.models import BetSide, Market, Outcome, Source
 
 log = logging.getLogger(__name__)
@@ -27,17 +28,24 @@ PAGE_SIZE = 500   # API max is 500
 MIN_PROB = 0.02
 MAX_PROB = 0.98
 
+_CACHE_FILE = CACHE_DIR / "gemini_cache.json"
+
 
 class GeminiFeed:
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(timeout=20.0)
+        self._disk_markets = load_cache(_CACHE_FILE, Source.GEMINI)
 
     async def fetch(self) -> list[Market]:
         try:
-            return await self._fetch()
+            result = await self._fetch()
+            if result:
+                self._disk_markets = result
+                save_cache(_CACHE_FILE, result)
+            return result or self._disk_markets
         except Exception:
             log.exception("Gemini fetch failed")
-            return []
+            return self._disk_markets
 
     async def _fetch(self) -> list[Market]:
         raw_events: list[dict] = []

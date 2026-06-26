@@ -27,8 +27,11 @@ from typing import Optional
 
 import httpx
 
+from src.feeds.feed_cache import CACHE_DIR, SPORTS_MAX_AGE, load_cache, save_cache
 from src.feeds.kalshi_rate import kalshi_sports_request as kalshi_request
 from src.models import BetSide, Market, Outcome, Source
+
+_CACHE_FILE = CACHE_DIR / "kalshi_sports_cache.json"
 
 log = logging.getLogger(__name__)
 
@@ -102,13 +105,19 @@ class KalshiSportsFeed:
         )
         # Per-series state: consecutive empty cycles
         self._empty: dict[str, int] = {}
+        self._disk_markets = load_cache(_CACHE_FILE, Source.KALSHI_SPORTS,
+                                        max_age=SPORTS_MAX_AGE)
 
     async def fetch(self) -> list[Market]:
         try:
-            return await self._fetch()
+            result = await self._fetch()
+            if result:
+                self._disk_markets = result
+                save_cache(_CACHE_FILE, result)
+            return result or self._disk_markets
         except Exception:
             log.exception("KalshiSports fetch failed")
-            return []
+            return self._disk_markets
 
     async def _fetch(self) -> list[Market]:
         markets: list[Market] = []

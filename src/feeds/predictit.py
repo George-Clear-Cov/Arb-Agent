@@ -14,10 +14,12 @@ Prices are in the 0–1 probability range (not 0–100 cents like PH API).
 """
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import httpx
 
+from src.feeds.feed_cache import CACHE_DIR, load_cache, save_cache
 from src.models import BetSide, Market, Outcome, Source
 
 log = logging.getLogger(__name__)
@@ -28,12 +30,15 @@ API_URL = "https://www.predictit.org/api/marketdata/all/"
 MIN_PROB = 0.03
 MAX_PROB = 0.97
 
+_CACHE_FILE = CACHE_DIR / "predictit_cache.json"
+
 
 class PredictItFeed:
     """Single-request PredictIt feed. No API key needed."""
 
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(timeout=20.0)
+        self._disk_markets = load_cache(_CACHE_FILE, Source.PREDICTIT)
 
     async def fetch(self) -> list[Market]:
         try:
@@ -42,7 +47,7 @@ class PredictItFeed:
             data = resp.json()
         except Exception as exc:
             log.error("PredictIt fetch error: %s", exc)
-            return []
+            return self._disk_markets
 
         markets: list[Market] = []
         for raw_mkt in data.get("markets", []):
@@ -52,7 +57,10 @@ class PredictItFeed:
             markets.extend(parsed)
 
         log.info("PredictIt: %d markets", len(markets))
-        return markets
+        if markets:
+            self._disk_markets = markets
+            save_cache(_CACHE_FILE, markets)
+        return markets or self._disk_markets
 
     def _parse_market(self, mkt: dict) -> list[Market]:
         """

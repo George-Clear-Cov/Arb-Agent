@@ -29,7 +29,8 @@ from dotenv import load_dotenv
 from src.alerts.notifier import Notifier
 from src.models import BetSide, Market, Outcome, Source
 from src.dashboard.app import app, is_kill_switch_active, set_store, update_state
-from src.engine.detector import detect_arbs
+from src.engine.detector import detect_arbs_with_groups
+from src.engine.pair_monitor import ConfirmedPairMonitor
 from src.engine.feed_monitor import feed_monitor
 from src.engine.matcher import init_llm_matcher
 from src.engine.sizer import kelly_stake
@@ -39,6 +40,7 @@ from src.execution.paper_trader import PaperTrader
 from src.execution.polymarket_exec import PolymarketExecutor
 from src.feeds.kalshi import KalshiFeed
 from src.feeds.kalshi_sports import KalshiSportsFeed
+from src.feeds.kalshi_ws import KalshiWSFeed
 from src.feeds.polymarket_clob import PolymarketCLOBFeed
 from src.feeds.polymarket_ws import PolymarketWSFeed
 from src.feeds.predictit import PredictItFeed
@@ -255,7 +257,8 @@ class Agent:
         self._last_kalshi_sports_fetch: datetime | None = None
         self._kalshi_sports_markets: list[Market] = []
 
-        # Polymarket cache — avoids dropping markets on transient API errors
+        # Polymarket cache — pre-seeded from disk on startup so WS can start
+        # subscribing immediately without waiting for the 3-min CLOB fetch.
         self._poly_markets: list[Market] = []
 
     async def setup(self) -> None:
@@ -294,6 +297,9 @@ class Agent:
                 api_key=ka["api_key"],
                 base_url=ka["base_url"],
             )
+            if self._kalshi_feed._disk_markets:
+                self._kalshi_markets = self._kalshi_feed._disk_markets
+                log.info("Kalshi: pre-seeded %d markets from disk cache", len(self._kalshi_markets))
             # Separate fast-polling feed for live game markets
             self._kalshi_sports_feed = KalshiSportsFeed(
                 api_key=ka["api_key"],
@@ -337,9 +343,16 @@ class Agent:
             clob_url=po.get("clob_url", "https://clob.polymarket.com"),
             gamma_url=po.get("gamma_url", "https://gamma-api.polymarket.com"),
         )
+        # Seed from disk cache immediately so detection/WS don't wait 3 min
+        if self._poly_feed._disk_markets:
+            self._poly_markets = self._poly_feed._disk_markets
+            log.info("Polymarket: pre-seeded %d markets from disk cache", len(self._poly_markets))
 
         # Dedicated PredictIt feed — free public API, no auth, no quota concerns
         self._predictit_feed = PredictItFeed()
+        if self._predictit_feed._disk_markets:
+            self._pi_markets = self._predictit_feed._disk_markets
+            log.info("PredictIt: pre-seeded %d markets from disk cache", len(self._pi_markets))
 
         # Opinion — BNB Chain CLOB (requires OPINION_API_KEY env var)
         self._opinion_feed = OpinionFeed()
@@ -347,11 +360,15 @@ class Agent:
 
         # Gemini prediction markets — CFTC-regulated, no auth needed for reads
         self._gemini_feed = GeminiFeed()
-        self._gemini_markets: list[Market] = []
+        self._gemini_markets: list[Market] = self._gemini_feed._disk_markets or []
+        if self._gemini_markets:
+            log.info("Gemini: pre-seeded %d markets from disk cache", len(self._gemini_markets))
 
         # Hyperliquid HIP-4 outcome markets — no auth needed
         self._hyperliquid_feed = HyperliquidFeed()
-        self._hyperliquid_markets: list[Market] = []
+        self._hyperliquid_markets: list[Market] = self._hyperliquid_feed._disk_markets or []
+        if self._hyperliquid_markets:
+            log.info("Hyperliquid: pre-seeded %d markets from disk cache", len(self._hyperliquid_markets))
 
         # ProphetX sports exchange via PolyRouter (requires POLYROUTER_API_KEY)
         self._prophetx_feed = ProphetXFeed()
@@ -573,14 +590,51 @@ class Agent:
         return f"Dismissed '{arb.event_name[:50]}' — will never re-alert"
 
     async def detect_loop(self) -> None:
-        """Arb detection loop — wakes on WS price change OR 30s timeout."""
+        """Hybrid arb detection:
+          - Fast path (<100ms): check confirmed pairs on every WS price event
+          - Slow path (60-90s): full O(n²) matching scan every 5 minutes
+
+        The slow path runs in a thread executor. The fast path runs inline
+        since it's pure arithmetic on in-memory Market objects.
+        """
+        from src.engine.matcher import _llm_matcher as _lm
+
         log.info("Waiting for initial feed data...")
         while not self._kalshi_markets or not self._poly_markets:
             await asyncio.sleep(2)
-        log.info("Initial data ready — starting arb detection (WS-driven + 30s fallback)")
+
+        pair_monitor = ConfirmedPairMonitor()
+        if _lm:
+            pair_monitor.load_from_llm_cache(_lm)
+
+        # If brain has confirmed pairs, skip the expensive startup scan.
+        # The fast path runs immediately; full scan runs in 5 minutes for new pairs.
+        if pair_monitor.pair_count > 0:
+            pair_monitor.last_full_scan_ts = time.time()
+
+        log.info("Hybrid detection ready — %d confirmed pairs pre-loaded (fast path)",
+                 pair_monitor.pair_count)
+
+        # Pre-populate dashboard with last known arbs from DB so page isn't blank
+        # during the window between startup and the first detection cycle.
+        if self._store:
+            _cutoff = datetime.utcnow() - timedelta(hours=24)
+            _recent = await self._store.get_recent_opportunities(limit=50)
+            _live_recent = [a for a in _recent if a.detected_at >= _cutoff]
+            if _live_recent:
+                stats = await self._trader.get_stats()
+                markets = (self._poly_markets + self._kalshi_markets +
+                           self._kalshi_sports_markets + self._pi_markets)
+                await update_state(markets, _live_recent, stats)
+                log.info("Dashboard pre-populated with %d recent arbs from DB", len(_live_recent))
 
         _last_tuner_run: float = 0.0
-        _TUNER_INTERVAL = 86400  # re-tune thresholds once per day
+        _TUNER_INTERVAL = 86400
+        _last_fast_path_ts: float = 0.0
+        _FAST_PATH_DEBOUNCE = 2.0  # min seconds between fast path runs
+
+        # Track arbs across cycles for dashboard continuity
+        _last_arbs: list = []
 
         while True:
             try:
@@ -589,8 +643,9 @@ class Agent:
                     await asyncio.sleep(30)
                     continue
 
-                # Run threshold tuner daily in a thread (sync sqlite query)
                 now_ts = time.time()
+
+                # Threshold tuner — once per day
                 if now_ts - _last_tuner_run > _TUNER_INTERVAL:
                     loop = asyncio.get_event_loop()
                     new_thresholds = await loop.run_in_executor(
@@ -611,27 +666,49 @@ class Agent:
                     + self._prophetx_markets
                 )
 
-                # Reset per-cycle LLM call counter before detection runs
-                from src.engine.matcher import _llm_matcher as _lm
-                if _lm:
-                    _lm.reset_cycle()
+                pair_monitor.update_market_index(markets)
 
-                loop = asyncio.get_event_loop()
-                arbs = await loop.run_in_executor(
-                    self._detect_executor, detect_arbs, markets, self._min_arb, self._stake
-                )
-                log.info("Detected %d arb opportunities (fee-adjusted)", len(arbs))
+                if pair_monitor.should_run_full_scan():
+                    # ── SLOW PATH: full matching + pair discovery (every 5 min) ──
+                    if _lm:
+                        _lm.reset_cycle()
+                    loop = asyncio.get_event_loop()
+                    arbs, groups = await loop.run_in_executor(
+                        self._detect_executor,
+                        detect_arbs_with_groups,
+                        markets, self._min_arb, self._stake,
+                    )
+                    pair_monitor.register_groups(groups)
+                    pair_monitor.last_full_scan_ts = now_ts
+                    log.info("Full scan: %d arbs | %d confirmed pairs",
+                             len(arbs), pair_monitor.pair_count)
+                    _last_arbs = arbs
 
-                for arb in arbs:
-                    await self._store.save_opportunity(arb)
-                await self._notifier.notify_arbs(arbs)
-                await self._auto_execute(arbs)
-                stats = await self._trader.get_stats()
-                await update_state(markets, arbs, stats)
+                    for arb in arbs:
+                        await self._store.save_opportunity(arb)
+                    await self._notifier.notify_arbs(arbs)
+                    await self._auto_execute(arbs)
+                    stats = await self._trader.get_stats()
+                    await update_state(markets, arbs, stats)
+
+                elif pair_monitor.pair_count > 0 and (now_ts - _last_fast_path_ts) >= _FAST_PATH_DEBOUNCE:
+                    # ── FAST PATH: check confirmed pairs only (<100ms) ──
+                    _last_fast_path_ts = now_ts
+                    arbs = pair_monitor.check_confirmed_pairs(self._min_arb, self._stake)
+                    if arbs:
+                        log.info("Fast path: %d arbs on confirmed pairs", len(arbs))
+                        _last_arbs = arbs
+                        for arb in arbs:
+                            await self._store.save_opportunity(arb)
+                        await self._notifier.notify_arbs(arbs)
+                        await self._auto_execute(arbs)
+                        stats = await self._trader.get_stats()
+                        await update_state(markets, arbs, stats)
 
             except Exception:
                 log.exception("Detection loop error")
-            # Wake on WS price change OR 30s timeout (whichever comes first)
+
+            # Wake on WS price change OR 30s timeout
             self._price_event.clear()
             try:
                 await asyncio.wait_for(self._price_event.wait(), timeout=30)
@@ -646,10 +723,16 @@ class Agent:
 
         tasks = [self.detect_loop()]
 
-        # Polymarket real-time WebSocket — updates prices in-place and fires
-        # _price_event so detect_loop wakes immediately instead of waiting 30s
+        # Polymarket real-time WebSocket
         _poly_ws = PolymarketWSFeed(self._price_event)
         tasks.append(_poly_ws.run(lambda: self._poly_markets))
+
+        # Kalshi real-time WebSocket — requires RSA key (same as executor)
+        _kalshi_key  = os.environ.get("KALSHI_API_KEY", "")
+        _kalshi_pkey = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "")
+        if _kalshi_key and _kalshi_pkey:
+            _kalshi_ws = KalshiWSFeed(_kalshi_key, _kalshi_pkey, self._price_event)
+            tasks.append(_kalshi_ws.run(lambda: self._kalshi_markets))
 
         if self._kalshi_feed:
             tasks.append(self._feed_loop(

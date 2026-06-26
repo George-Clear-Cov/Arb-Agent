@@ -12,12 +12,15 @@ Gamma (metadata): https://gamma-api.polymarket.com
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import httpx
 
 from src.feeds.base import BaseFeed
+from src.feeds.feed_cache import CACHE_DIR, load_cache, save_cache
 from src.models import BetSide, Market, Outcome, Source
 
 log = logging.getLogger(__name__)
@@ -28,6 +31,9 @@ GAMMA_BASE = "https://gamma-api.polymarket.com"
 # Only include markets with at least this much liquidity ($)
 MIN_LIQUIDITY = 50_000.0        # game markets — high bar keeps noise out
 MIN_LIQUIDITY_PRED = 5_000.0    # prediction markets — lower bar catches niche topics
+
+_CACHE_FILE = CACHE_DIR / "polymarket_cache.json"
+_CACHE_MAX_AGE = 12 * 3600  # 12 hours — refresh overnight at most
 
 
 class PolymarketCLOBFeed(BaseFeed):
@@ -45,13 +51,18 @@ class PolymarketCLOBFeed(BaseFeed):
         self.gamma_url = gamma_url
         self._client = httpx.AsyncClient(timeout=20.0)
         self._market_cache: dict[str, dict] = {}  # condition_id → clob market metadata
+        self._disk_markets = load_cache(_CACHE_FILE, Source.POLYMARKET, _CACHE_MAX_AGE)
 
     async def fetch(self) -> list[Market]:
         try:
-            return await self._fetch()
+            result = await self._fetch()
+            if result:
+                self._disk_markets = result
+                save_cache(_CACHE_FILE, result)
+            return result or self._disk_markets
         except Exception:
             log.exception("PolymarketCLOB fetch failed")
-            return []
+            return self._disk_markets
 
     async def _fetch(self) -> list[Market]:
         # Two parallel fetch strategies for full coverage:
@@ -116,21 +127,40 @@ class PolymarketCLOBFeed(BaseFeed):
 
         log.info("Polymarket: %d unique gamma markets before CLOB pricing", len(gamma_markets))
 
-        # Step 2: fetch CLOB book prices with bounded concurrency.
-        # Firing 900+ tasks at once floods the asyncio event loop — cap at 20.
+        # Step 2: only CLOB-price markets not already in disk cache.
+        # Existing markets get live prices from the WS feed — no need to re-fetch.
+        cached_ids = {m.market_id for m in self._disk_markets}
+        need_clob = [m for m in gamma_markets
+                     if str(m.get("slug") or m.get("id", "")) not in cached_ids]
+        skip_clob = [m for m in gamma_markets
+                     if str(m.get("slug") or m.get("id", "")) in cached_ids]
+
+        if need_clob:
+            log.info("Polymarket: CLOB-pricing %d new markets (%d served from cache)",
+                     len(need_clob), len(skip_clob))
+        else:
+            log.info("Polymarket: all %d markets served from cache (0 new)", len(skip_clob))
+
         sem = asyncio.Semaphore(20)
 
         async def _guarded_price(m):
             async with sem:
                 return await self._price_market(m)
 
-        tasks = [_guarded_price(m) for m in gamma_markets]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        new_priced: list[Market] = []
+        if need_clob:
+            results = await asyncio.gather(
+                *[_guarded_price(m) for m in need_clob], return_exceptions=True
+            )
+            new_priced = [r for r in results if isinstance(r, Market)]
 
-        markets: list[Market] = []
-        for r in results:
-            if isinstance(r, Market):
-                markets.append(r)
+        # Merge: cached markets still in gamma + freshly priced new markets
+        cached_by_id = {m.market_id: m for m in self._disk_markets}
+        gamma_ids = {str(m.get("slug") or m.get("id", "")) for m in gamma_markets}
+        markets: list[Market] = (
+            [cached_by_id[mid] for mid in gamma_ids if mid in cached_by_id]
+            + new_priced
+        )
         sport_counts: dict[str, int] = {}
         for m in markets:
             sport_counts[m.sport] = sport_counts.get(m.sport, 0) + 1

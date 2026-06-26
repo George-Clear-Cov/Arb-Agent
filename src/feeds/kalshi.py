@@ -25,23 +25,21 @@ from typing import Optional
 
 import httpx
 
+from src.feeds.feed_cache import CACHE_DIR, load_cache, save_cache
 from src.feeds.kalshi_rate import kalshi_request
 from src.models import BetSide, Market, Outcome, Source
 
 log = logging.getLogger(__name__)
 
-# Kalshi Sports events are long-horizon narrative prediction markets
-# (player retirements, debut dates, team expansions) — not game outcomes.
-# They are matchable with similar questions on Polymarket/PredictIt, so
-# we no longer skip them.  The multi-leg parlay markets are skipped by
-# the yes_ask_dollars/no_ask_dollars price check in _parse_market instead.
 _SKIP_CATEGORIES: set[str] = set()  # nothing skipped at category level
 
 MAX_EVENTS  = 200   # events per page (API maximum)
 MAX_PAGES   = 3     # paginate up to 600 events to cover all categories
-MAX_DIRECT_PAGES = 8  # /markets direct fetch: 8 pages × 200 = 1,600 short-term markets
+NEAR_TERM_DAYS = 20 # only fetch markets closing within this window
 MIN_PROB    = 0.03
 MAX_PROB    = 0.97
+
+_CACHE_FILE = CACHE_DIR / "kalshi_cache.json"
 
 
 class KalshiFeed:
@@ -51,6 +49,7 @@ class KalshiFeed:
             headers={"Authorization": f"Token {api_key}"},
             timeout=20.0,
         )
+        self._disk_markets = load_cache(_CACHE_FILE, Source.KALSHI)
 
     async def fetch(self) -> list[Market]:
         try:
@@ -58,14 +57,17 @@ class KalshiFeed:
                 self._fetch(),
                 self._fetch_direct_markets(),
             )
-            # Merge: direct markets not already seen via events endpoint
             seen = {m.market_id for m in events_markets}
             new_markets = [m for m in direct_markets if m.market_id not in seen]
             log.info("Kalshi direct /markets: %d new markets (deduped from %d)", len(new_markets), len(direct_markets))
-            return events_markets + new_markets
+            result = events_markets + new_markets
+            if result:
+                self._disk_markets = result
+                save_cache(_CACHE_FILE, result)
+            return result or self._disk_markets
         except Exception:
             log.exception("Kalshi fetch failed")
-            return []
+            return self._disk_markets
 
     async def _fetch(self) -> list[Market]:
         """Fetch all open prediction markets using with_nested_markets=true.
@@ -120,19 +122,19 @@ class KalshiFeed:
         return markets
 
     async def _fetch_direct_markets(self) -> list[Market]:
-        """Fetch short-term markets via GET /markets with a 90-day close window.
+        """Fetch near-term markets via GET /markets with a 30-day close window.
 
-        The /events endpoint only exposes ~600 events; thousands of additional
-        binary markets (economic indicators, earnings, movie scores, political
-        events) are only accessible via the direct /markets endpoint filtered
-        by close_time. This supplements the events-based fetch without replacing it.
+        Paginates until all markets are fetched — the old 8-page cap was silently
+        cutting off Wimbledon, F1, and other sports markets that Polymarket also lists.
         """
         markets: list[Market] = []
         cursor: str | None = None
         now = datetime.now(timezone.utc)
-        end = now + timedelta(days=90)
+        end = now + timedelta(days=NEAR_TERM_DAYS)
+        page = 0
+        consecutive_empty = 0
 
-        for page in range(MAX_DIRECT_PAGES):
+        while True:
             params: dict = {
                 "status": "open",
                 "limit": MAX_EVENTS,
@@ -153,18 +155,41 @@ class KalshiFeed:
                 break
 
             page_markets = data.get("markets", [])
+            valid_on_page = 0
             for raw in page_markets:
                 m = self._parse_market(raw)
                 if m:
                     markets.append(m)
+                    valid_on_page += 1
+
+            # Stop early once we've entered skip-series territory (esports parlay
+            # markets fill later pages but all lack binary prices).
+            if valid_on_page == 0:
+                consecutive_empty += 1
+                if consecutive_empty >= 3:
+                    break
+            else:
+                consecutive_empty = 0
 
             cursor = data.get("cursor")
+            page += 1
             if not cursor or not page_markets:
                 break
 
+        log.info("Kalshi /markets direct: %d markets within %dd across %d pages", len(markets), NEAR_TERM_DAYS, page)
         return markets
 
+    # Series that never have binary yes/no prices — skip without an HTTP request
+    _SKIP_SERIES_PREFIXES: tuple[str, ...] = (
+        "KXMVESPORTSMULTIGAMEEXTENDED",
+        "KXMVECROSSCATEGORY",
+    )
+
     def _parse_market(self, m: dict) -> Optional[Market]:
+        ticker = m.get("ticker", "")
+        if ticker.startswith(self._SKIP_SERIES_PREFIXES):
+            return None
+
         # New API: prices are string floats in 0-1 range ("0.6500")
         yes_ask_raw = m.get("yes_ask_dollars")
         no_ask_raw  = m.get("no_ask_dollars")
@@ -235,7 +260,9 @@ _KALSHI_SPORT_PREFIXES: list[tuple[str, list[str]]] = [
     ("basketball", ["KXNBA", "KXSONICS", "KXNBASEATTLE", "KXNBATEAM", "KXSPORTSOWNERLBJ"]),
     ("hockey",     ["KXNHL", "KXCANADACUP", "KXSTANLEY"]),
     ("football",   ["KXNFL", "KXSUPERBOWL", "KXNCAA"]),
-    ("soccer",     ["KXSOCCER", "KXWORLDCUP", "KXEURO", "KXCL", "KXEPL", "KXMLS",
+    ("soccer",     ["KXSOCCER", "KXWORLDCUP", "KXWCGAME", "KXWC2H", "KXWCGOAL", "KXWCBTTS",
+                    "KXWCTOTAL", "KXWCSPREAD", "KXWC2HTOTAL", "KXWC2HBTTS", "KXWC2HSPREAD",
+                    "KXWC", "KXEURO", "KXCL", "KXEPL", "KXMLS",
                     "KXLALIGA", "KXSERIEА", "KXBUNDESLIGA", "KXCOPAAMERICA"]),
     ("tennis",     ["KXATP", "KXWTA", "KXWIMBLEDON", "KXFRENCHOPEN", "KXUSOPEN"]),
     ("golf",       ["KXPGA", "KXMASTERS", "KXGOLF"]),
@@ -255,7 +282,7 @@ _KALSHI_SPORT_KEYWORDS: list[tuple[str, list[str]]] = [
     ("soccer",     ["world cup", "fifa", "soccer", "epl", "premier league", "la liga",
                     "bundesliga", "serie a", "ligue 1", "champions league", "europa league",
                     "copa america", "euros", "euro 2026", "concacaf", "mls",
-                    "nations league"]),
+                    "nations league", "2nd half", "both teams to score", "btts", "corners"]),
     ("tennis",     ["wimbledon", "french open", "australian open", "us open tennis",
                     "grand slam", "djokovic", "sinner", "alcaraz", "swiatek"]),
     ("golf",       ["pga", "masters", "golf", "us open golf", "the open championship",
