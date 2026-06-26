@@ -26,7 +26,6 @@ nohup $VENV agents/price_delta_agent.py >> $LOGS/price-delta-agent.log 2>&1 & ec
 nohup $VENV agents/position_settler.py  >> $LOGS/position-settler.log  2>&1 & echo "position:      $!"
 nohup $VENV agents/health_watchdog.py   >> $LOGS/health-watchdog.log   2>&1 & echo "watchdog:      $!"
 nohup $VENV agents/brain_decay.py       >> $LOGS/brain-decay.log       2>&1 & echo "brain_decay:   $!"
-nohup $VENV agents/audit_agent.py       >> $LOGS/audit-agent.log       2>&1 & echo "audit:         $!"
 
 echo ""
 echo "All agents started. Logs:"
@@ -36,4 +35,3 @@ echo "  tail -f $LOGS/price-delta-agent.log"
 echo "  tail -f $LOGS/position-settler.log"
 echo "  tail -f $LOGS/health-watchdog.log"
 echo "  tail -f $LOGS/brain-decay.log"
-echo "  tail -f $LOGS/audit-agent.log"

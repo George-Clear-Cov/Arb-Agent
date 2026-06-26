@@ -374,13 +374,7 @@ class Agent:
         self._prophetx_feed = ProphetXFeed()
         self._prophetx_markets: list[Market] = []
 
-        # LLM-powered market matching — enabled when ANTHROPIC_API_KEY is set
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if anthropic_key:
-            try:
-                init_llm_matcher(anthropic_key)
-            except Exception as exc:
-                log.warning("LLM matcher init failed: %s", exc)
+        # LLM matcher disabled — matching handled by matcher_agent.py (embeddings, free)
 
     async def _check_daily_loss_limit(self) -> bool:
         """Return True if we should halt trading due to daily loss limit."""
