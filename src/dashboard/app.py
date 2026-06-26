@@ -254,6 +254,15 @@ async def api_health():
 
 @app.get("/api/state")
 async def api_state():
+    # If detection hasn't run yet, serve the most recent arbs from DB so the
+    # dashboard isn't blank on page load / after agent restarts.
+    if not _state["arbs"] and _store is not None:
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        recent = await _store.get_recent_opportunities(limit=50)
+        live = [a for a in recent if a.detected_at >= cutoff]
+        if live:
+            _state["arbs"] = live
     return JSONResponse(_build_ws_payload())
 
 
@@ -546,7 +555,6 @@ def _arb_to_dict(a: ArbOpportunity) -> dict:
         "market_type": a.market_type,
         "gross_margin_pct": round(a.gross_margin * 100, 2),
         "margin_pct": round(a.margin * 100, 2),
-        "annualized_margin_pct": round(a.annualized_margin * 100, 1),
         "total_stake": a.total_stake,
         "profit": a.profit,
         "gross_profit": a.gross_profit,
