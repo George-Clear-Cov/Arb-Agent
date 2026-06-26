@@ -41,11 +41,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("price_delta")
 
-BRAIN_FILE  = Path("brain/learned_pairs.json")
-POLL_SEC    = 10          # check every 10 seconds
-WINDOW_SEC  = 60          # rolling window for delta calc
-DELTA_ALERT = 0.03        # 3% move in window = alert
-MARGIN_WARN = 0.005       # log when margin > 0.5% even if no arb yet
+BRAIN_FILE     = Path("brain/learned_pairs.json")
+POLL_SEC       = 10     # check every 10 seconds
+WINDOW_SEC     = 60     # rolling window for delta calc
+DELTA_ALERT    = 0.03   # 3% move in window = forming-arb alert
+MARGIN_WARN    = 0.03   # log NEAR-ARB when margin > 3%
+MAX_PLAUSIBLE  = 0.30   # skip pairs with margin > 30% (bad brain matches)
 
 # source name → Source enum (for reconstructing Market objects)
 _SOURCE_MAP = {
@@ -155,6 +156,9 @@ async def main() -> None:
                 if result is None:
                     continue
                 margin, price_a, price_b = result
+                # Skip pairs where margin is implausibly high — likely a bad LLM match
+                if margin > MAX_PLAUSIBLE:
+                    continue
 
                 # ── Persist to DB (live tracking) ──────────────────────────
                 src_name_a = ma.get("_source_name", "unknown")
