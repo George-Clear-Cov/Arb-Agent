@@ -219,11 +219,16 @@ class KalshiFeed:
         if sub and sub.lower() not in title.lower():
             title = f"{title}: {sub}"
 
+        raw_desc = (m.get("rules_primary") or m.get("rules") or
+                    m.get("subtitle") or m.get("yes_sub_title") or "")
+        description = raw_desc[:600].strip()
+
         return Market(
             source=Source.KALSHI,
             market_id=ticker,
             sport=_kalshi_sport(ticker, title),
             event_name=title,
+            description=description,
             commence_time=_parse_dt(m.get("close_time")),
             home_team=None,
             away_team=None,

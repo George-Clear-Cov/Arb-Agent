@@ -89,6 +89,7 @@ class GeminiFeed:
         category = event.get("category", "")
         sport = _category_to_sport(category, event.get("title", ""))
         commence = _parse_dt(event.get("startTime") or expiry)
+        description = (event.get("description") or event.get("subtitle") or "")[:600].strip()
 
         markets: list[Market] = []
 
@@ -116,6 +117,7 @@ class GeminiFeed:
                 market_id=market_id,
                 sport=sport,
                 event_name=event.get("title", ""),
+                description=description,
                 commence_time=commence,
                 home_team=None,
                 away_team=None,
@@ -163,6 +165,7 @@ class GeminiFeed:
                     market_id=contract_id,
                     sport=sport,
                     event_name=market_name,
+                    description=description,
                     commence_time=commence,
                     home_team=None,
                     away_team=None,

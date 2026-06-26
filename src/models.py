@@ -55,6 +55,7 @@ class Market:
     market_type: str
     outcomes: list[Outcome]
     total_volume: Optional[float] = None     # total $ volume — used for liquidity filter
+    description: str = ""                    # market rules / description text from source
     fetched_at: datetime = field(default_factory=datetime.utcnow)
     raw: dict = field(default_factory=dict, repr=False)
 

@@ -525,11 +525,15 @@ class PolymarketCLOBFeed(BaseFeed):
         # Extract home/away for game events
         home, away = _extract_teams(event_name) if market_type in ("h2h", "spreads", "totals") else (None, None)
 
+        raw_desc = m.get("description") or m.get("rules") or ""
+        description = raw_desc[:600].strip()
+
         return Market(
             source=Source.POLYMARKET,
             market_id=str(m.get("slug") or m.get("id", "")),
             sport=_polymarket_sport(m),
             event_name=event_name,
+            description=description,
             commence_time=_parse_dt(m.get("endDate")),
             home_team=home,
             away_team=away,
