@@ -581,6 +581,12 @@ _SPORT_KEYWORDS: list[tuple[str, list[str]]] = [
     ("esports",    ["esports", "league of legends", "cs:go", "counter-strike",
                     "valorant", "dota", "overwatch"]),
     ("cricket",    ["cricket", "ipl", "test match", "ashes"]),
+    ("economics",  ["cpi", "inflation", "consumer price index", "federal reserve",
+                    "fed rate", "interest rate", "rate cut", "rate hike", "fomc",
+                    "unemployment", "jobs report", "nonfarm payroll", "gdp",
+                    "gross domestic product", "recession", "pce", "tariff",
+                    "trade war", "trade deficit", "treasury yield", "10-year",
+                    "2-year yield", "basis points", "bps"]),
 ]
 
 
@@ -645,6 +651,10 @@ def _polymarket_sport(m: dict) -> str:
         "esports": "esports",
         "formula 1": "f1",
         "f1": "f1",
+        "economics": "economics",
+        "economy": "economics",
+        "finance": "economics",
+        "crypto": "crypto",
     }
     if category and category in _CATEGORY_MAP and _CATEGORY_MAP[category]:
         return _CATEGORY_MAP[category]

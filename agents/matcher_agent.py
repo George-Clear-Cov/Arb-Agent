@@ -46,14 +46,21 @@ _JSON_RE      = re.compile(r'\[[\s\w,]+\]')
 # Sports to compare between each platform pair
 SPORT_PAIRS: list[tuple[str, str, str]] = [
     # (sport, source_a_cache, source_b_cache)
+    # Economics — highest priority for short-term arbs (CPI, Fed, GDP releases)
+    ("economics",  "kalshi_cache",        "polymarket_cache"),
+    ("economics",  "kalshi_cache",        "predictit_cache"),
+    # Soccer
     ("soccer",     "polymarket_cache",    "kalshi_cache"),
     ("soccer",     "polymarket_cache",    "kalshi_sports_cache"),
+    # Baseball
     ("baseball",   "polymarket_cache",    "kalshi_sports_cache"),
     ("baseball",   "polymarket_cache",    "kalshi_cache"),
+    # Other sports
     ("tennis",     "polymarket_cache",    "kalshi_sports_cache"),
     ("mma",        "polymarket_cache",    "kalshi_sports_cache"),
     ("basketball", "polymarket_cache",    "kalshi_sports_cache"),
     ("f1",         "polymarket_cache",    "kalshi_sports_cache"),
+    # Prediction
     ("prediction", "polymarket_cache",    "predictit_cache"),
     ("prediction", "polymarket_cache",    "gemini_cache"),
     ("prediction", "kalshi_cache",        "predictit_cache"),
@@ -263,6 +270,56 @@ def ask_llm_prediction(client: anthropic.Anthropic,
     return [False] * len(pairs)
 
 
+def ask_llm_economics(client: anthropic.Anthropic,
+                      pairs: list[tuple[dict, dict]]) -> list[bool]:
+    """Ask Claude whether each pair of economic markets measures the EXACT same outcome.
+
+    Economic markets are threshold-specific: 'Will CPI rise >0.1%?' and
+    'Will CPI rise >0.2%?' are DIFFERENT markets even though they share all
+    keywords. Only return TRUE when same index, same period, same threshold,
+    same direction.
+    """
+    lines = []
+    for i, (a, b) in enumerate(pairs, 1):
+        lines.append(f"Pair {i}:")
+        lines.append(f"  A: \"{a['event_name']}\"")
+        lines.append(f"  B: \"{b['event_name']}\"")
+
+    prompt = (
+        "You are an economics expert reviewing prediction market pairs.\n\n"
+        "For each pair, determine if BOTH markets resolve YES/NO on the EXACT SAME outcome.\n\n"
+        "Rules:\n"
+        "- Same economic indicator (CPI, PCE, Fed rate, unemployment, GDP, etc.)\n"
+        "- Same time period (same month/quarter/year)\n"
+        "- Same threshold (0.2% is NOT the same as 0.3%)\n"
+        "- Same direction (above vs. below matter)\n"
+        "- Fed rate: '25bps cut' and 'rate cut by 25bps' = TRUE. '25bps cut' and '50bps cut' = FALSE.\n"
+        "- CPI: 'Will CPI rise >0.2% in June?' and 'June CPI MoM >0.2%' = TRUE\n"
+        "- CPI: 'Will CPI rise >0.1% in June?' and 'Will CPI rise >0.2% in June?' = FALSE\n\n"
+        "Return TRUE only if an arbitrageur can hedge one market against the other with certainty.\n\n"
+        + "\n".join(lines)
+        + "\n\nRespond with ONLY a JSON array of booleans. Example: [true, false, true]"
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        m = _JSON_RE.search(text)
+        if m:
+            text = m.group(0)
+        parsed = json.loads(text)
+        if isinstance(parsed, list) and len(parsed) == len(pairs):
+            matched = sum(1 for v in parsed if v)
+            log.info("LLM economics: %d/%d pairs matched", matched, len(pairs))
+            return [bool(v) for v in parsed]
+    except Exception as exc:
+        log.warning("LLM economics call failed: %s", exc)
+    return [False] * len(pairs)
+
+
 def run_cycle(client: anthropic.Anthropic) -> int:
     """One matching cycle. Returns number of new confirmed pairs found."""
     known    = load_brain()
@@ -294,7 +351,10 @@ def run_cycle(client: anthropic.Anthropic) -> int:
                     stopwords = {"will", "the", "a", "to", "in", "of", "vs", "win",
                                  "be", "for", "and", "or", "who", "what", "2026", "2028"}
                     overlap = (words_a - stopwords) & (words_b - stopwords)
-                    if not overlap and sport not in ("soccer",):
+                    # Economics markets use numbers/abbreviations that may not overlap
+                    # (e.g., "CPI MoM" vs "consumer price index month-over-month")
+                    # so allow them through even with 0 word overlap
+                    if not overlap and sport not in ("soccer", "economics"):
                         continue
                     candidates.append((ma, mb))
             if len(candidates) >= 200:
@@ -332,7 +392,9 @@ def run_cycle(client: anthropic.Anthropic) -> int:
 
             # Send unknowns to LLM
             if needs_llm:
-                if sport == "prediction":
+                if sport == "economics":
+                    results = ask_llm_economics(client, needs_llm)
+                elif sport == "prediction":
                     results = ask_llm_prediction(client, needs_llm)
                 else:
                     results = ask_llm_sports(client, needs_llm)

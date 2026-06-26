@@ -256,6 +256,9 @@ class KalshiFeed:
 
 
 _KALSHI_SPORT_PREFIXES: list[tuple[str, list[str]]] = [
+    ("economics",  ["KXCPI", "KXFED", "KXJOBS", "KXGDP", "KXPCE", "KXUNEMPLOYMENT",
+                    "KXINFLATION", "KXFOMC", "KXTARIFF", "KXTRADE", "KXRATE",
+                    "KXTREASURY", "KXYIELD", "KXHOUSING", "KXRETAIL", "KXPPI"]),
     ("baseball",   ["KXMLB", "KXWORLDSERIES"]),
     ("basketball", ["KXNBA", "KXSONICS", "KXNBASEATTLE", "KXNBATEAM", "KXSPORTSOWNERLBJ"]),
     ("hockey",     ["KXNHL", "KXCANADACUP", "KXSTANLEY"]),
@@ -273,6 +276,12 @@ _KALSHI_SPORT_PREFIXES: list[tuple[str, list[str]]] = [
 ]
 
 _KALSHI_SPORT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("economics",  ["cpi", "core cpi", "consumer price index", "federal reserve",
+                    "interest rate", "rate cut", "rate hike", "fomc", "fed funds",
+                    "unemployment rate", "jobs report", "nonfarm", "payroll",
+                    "gdp", "gross domestic product", "recession", "pce", "tariff",
+                    "trade war", "treasury yield", "basis points", "inflation rate",
+                    "retail sales", "housing starts", "ppi", "producer price"]),
     ("baseball",   ["mlb", "world series", "baseball", "cy young", "al mvp", "nl mvp",
                     "american league champion", "national league champion", "debut date"]),
     ("basketball", ["nba", "basketball", "lebron", "steph curry",
