@@ -38,9 +38,9 @@ log = logging.getLogger("matcher_agent")
 CACHE_DIR     = Path("state")
 BRAIN_FILE    = Path("brain/learned_pairs.json")
 PATTERNS_FILE = Path("brain/match_patterns.json")
-LOOP_SEC      = 300   # 5 minutes
+LOOP_SEC      = 1800  # 30 minutes — brain fills up fast, no need to hammer every 5m
 BATCH_SIZE    = 10    # pairs per Claude call
-MAX_CALLS     = 20    # cap per cycle to control cost
+MAX_CALLS     = 10    # cap per cycle (~$0.01/cycle at Haiku prices)
 _JSON_RE      = re.compile(r'\[[\s\w,]+\]')
 
 # Sports to compare between each platform pair
