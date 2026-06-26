@@ -188,10 +188,22 @@ def save_patterns(data: dict) -> None:
     os.replace(tmp, PATTERNS_FILE)
 
 
+_GENERIC_ENTITIES = {
+    # Too common in soccer/sports to be discriminative
+    "world", "cup", "winner", "will", "win", "the", "men", "women",
+    "match", "game", "final", "semi", "round", "group", "stage", "stages",
+    "advance", "reach", "score", "goal", "goals", "team", "play",
+    # Common in prediction markets
+    "president", "trump", "election", "vote", "market", "price",
+    "first", "next", "last", "new", "top",
+}
+
 def extract_entities(name: str) -> set[str]:
     entities: set[str] = set()
     for word in re.findall(r'\b[A-Z][a-z]{2,}\b|\b\d{4}\b', name):
-        entities.add(word.lower())
+        w = word.lower()
+        if w not in _GENERIC_ENTITIES and len(w) >= 4:
+            entities.add(w)
     return entities
 
 
