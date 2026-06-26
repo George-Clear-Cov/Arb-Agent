@@ -95,23 +95,30 @@ def load_all_markets() -> dict[str, dict]:
     return index
 
 
-def implied_margin(ma: dict, mb: dict) -> float | None:
+def _yes_prob(outcomes: list[dict]) -> float | None:
+    """Return the YES implied probability for a binary market, or None if non-binary."""
+    for o in outcomes:
+        if o.get("name", "").lower() in ("yes", "true"):
+            return o.get("implied_prob")
+    return None
+
+
+def implied_margin(ma: dict, mb: dict) -> tuple[float, float, float] | None:
     """
-    Compute the back-back arb margin between two binary markets.
-    For each, take the best (lowest) YES implied prob.
-    margin = 1 - (prob_yes_a + prob_yes_b)  [if betting YES on each leg]
-    or more generally: 1 - sum(min_implied_probs_per_outcome)
-    Returns None if prices are missing.
+    Compute arb margin between two confirmed binary markets.
+    Returns (margin, price_a, price_b) or None if markets are non-binary.
+
+    For matched YES/NO markets:
+      - If ya < yb: bet YES on A (cheaper), NO on B → margin = yb - ya
+      - If ya > yb: bet NO on A, YES on B → margin = ya - yb
+      - Result = abs(ya - yb)
     """
     try:
-        outcomes_a = ma.get("outcomes", [])
-        outcomes_b = mb.get("outcomes", [])
-        if not outcomes_a or not outcomes_b:
+        ya = _yes_prob(ma.get("outcomes", []))
+        yb = _yes_prob(mb.get("outcomes", []))
+        if ya is None or yb is None:
             return None
-        # For binary: best YES price from each platform
-        prob_a = min(o["implied_prob"] for o in outcomes_a)
-        prob_b = min(o["implied_prob"] for o in outcomes_b)
-        return 1.0 - (prob_a + prob_b)
+        return abs(ya - yb), ya, yb
     except Exception:
         return None
 
@@ -120,9 +127,8 @@ async def main() -> None:
     store = Store()
     await store.connect()
 
-    # {pair_key: deque of (timestamp, margin)}
+    # {pair: deque of (timestamp, margin)} — in-memory rolling window for delta
     history: dict[tuple[str, str], deque] = {}
-    # pairs confirmed to be in alert state (suppress repeated logs)
     alerted: set[tuple[str, str]] = set()
 
     log.info("Price delta agent started (poll=%ds, alert_threshold=%.0f%%)",
@@ -136,7 +142,7 @@ async def main() -> None:
             now       = time.time()
             cycle    += 1
 
-            forming: list[tuple[float, str, str]] = []  # (delta, name_a, name_b)
+            forming: list[tuple[float, str, str]] = []
 
             for pair in confirmed:
                 id_a, id_b = pair
@@ -145,15 +151,35 @@ async def main() -> None:
                 if not ma or not mb:
                     continue
 
-                margin = implied_margin(ma, mb)
-                if margin is None:
+                result = implied_margin(ma, mb)
+                if result is None:
                     continue
+                margin, price_a, price_b = result
 
-                # Update rolling history
+                # ── Persist to DB (live tracking) ──────────────────────────
+                src_name_a = ma.get("_source_name", "unknown")
+                src_name_b = mb.get("_source_name", "unknown")
+                pair_key   = f"{id_a}__{id_b}"
+                event_name = ma.get("event_name", "")[:120]
+                try:
+                    await store.upsert_tracked_pair(
+                        pair_key=pair_key,
+                        market_name=event_name,
+                        platform_a=src_name_a,
+                        platform_b=src_name_b,
+                        market_id_a=id_a,
+                        market_id_b=id_b,
+                        price_a=price_a,
+                        price_b=price_b,
+                        margin=margin,
+                    )
+                except Exception:
+                    pass  # don't let DB errors break the detection loop
+
+                # ── Rolling delta for "forming arb" alerts ─────────────────
                 if pair not in history:
                     history[pair] = deque()
                 history[pair].append((now, margin))
-                # Prune old entries
                 while history[pair] and history[pair][0][0] < now - WINDOW_SEC:
                     history[pair].popleft()
 
@@ -161,41 +187,36 @@ async def main() -> None:
                 if len(hist) < 2:
                     continue
 
-                oldest_margin = hist[0][1]
-                delta = margin - oldest_margin  # positive = margin growing (arb forming)
+                delta = margin - hist[0][1]
 
-                # Log high-margin pairs even before arb threshold
                 if margin >= MARGIN_WARN and pair not in alerted:
-                    log.info("NEAR-ARB: margin=%.1f%% delta=%.1f%% | %s <-> %s",
-                             margin * 100, delta * 100,
-                             ma["event_name"][:40], mb["event_name"][:40])
+                    log.info("NEAR-ARB: margin=%.1f%% A=%.2f B=%.2f | %s <-> %s",
+                             margin * 100, price_a, price_b,
+                             event_name[:40], mb.get("event_name", "")[:40])
 
                 if delta >= DELTA_ALERT:
-                    forming.append((delta, ma["event_name"], mb["event_name"]))
+                    forming.append((delta, event_name, mb.get("event_name", "")))
                     if pair not in alerted:
                         alerted.add(pair)
                         log.info(
                             "FORMING ARB: +%.1f%% in %ds | margin=%.1f%% | %s <-> %s",
                             delta * 100, int(now - hist[0][0]),
-                            margin * 100,
-                            ma["event_name"][:40], mb["event_name"][:40],
+                            margin * 100, event_name[:40], mb.get("event_name", "")[:40],
                         )
-                        # Immediate detection pass on this pair
-                        src_a = _SOURCE_MAP.get(ma.get("_source_name", ""), Source.POLYMARKET)
-                        src_b = _SOURCE_MAP.get(mb.get("_source_name", ""), Source.KALSHI)
+                        src_a = _SOURCE_MAP.get(src_name_a, Source.POLYMARKET)
+                        src_b = _SOURCE_MAP.get(src_name_b, Source.KALSHI)
                         mkt_a = _from_dict(ma, src_a)
                         mkt_b = _from_dict(mb, src_b)
                         if mkt_a and mkt_b:
                             arbs = detect_arbs([mkt_a, mkt_b], min_margin=0.01)
                             if arbs:
-                                log.info("  → ARB CONFIRMED: %.1f%% — saving to DB",
-                                         arbs[0].margin * 100)
+                                log.info("  → ARB CONFIRMED: %.1f%%", arbs[0].margin * 100)
                                 for arb in arbs:
                                     await store.save_opportunity(arb)
                 else:
-                    alerted.discard(pair)  # reset once delta subsides
+                    alerted.discard(pair)
 
-            if forming and cycle % 6 == 0:  # summary every minute
+            if forming and cycle % 6 == 0:
                 log.info("%d forming arbs in last 60s", len(forming))
 
         except Exception:

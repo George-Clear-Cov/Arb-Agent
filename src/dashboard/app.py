@@ -348,6 +348,13 @@ async def api_arbs_prediction():
     return JSONResponse({"arbs": [_arb_to_dict(a) for a in arbs]})
 
 
+@app.get("/api/tracked-pairs")
+async def api_tracked_pairs():
+    """All confirmed matched pairs with live price history until expiry."""
+    pairs = await _store.get_tracked_pairs()
+    return JSONResponse({"pairs": pairs, "count": len(pairs)})
+
+
 @app.get("/api/debug")
 async def api_debug():
     """Feed diagnostics: per-source counts, sport breakdown, and feed health."""

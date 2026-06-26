@@ -35,12 +35,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("matcher_agent")
 
-CACHE_DIR   = Path("state")
-BRAIN_FILE  = Path("brain/learned_pairs.json")
-LOOP_SEC    = 300   # 5 minutes
-BATCH_SIZE  = 10    # pairs per Claude call
-MAX_CALLS   = 20    # cap per cycle to control cost
-_JSON_RE    = re.compile(r'\[[\s\w,]+\]')
+CACHE_DIR     = Path("state")
+BRAIN_FILE    = Path("brain/learned_pairs.json")
+PATTERNS_FILE = Path("brain/match_patterns.json")
+LOOP_SEC      = 300   # 5 minutes
+BATCH_SIZE    = 10    # pairs per Claude call
+MAX_CALLS     = 20    # cap per cycle to control cost
+_JSON_RE      = re.compile(r'\[[\s\w,]+\]')
 
 # Sports to compare between each platform pair
 SPORT_PAIRS: list[tuple[str, str, str]] = [
@@ -59,6 +60,70 @@ SPORT_PAIRS: list[tuple[str, str, str]] = [
     ("prediction", "kalshi_cache",        "gemini_cache"),
     ("prediction", "polymarket_cache",    "hyperliquid_cache"),
 ]
+
+
+def load_patterns() -> dict:
+    """Load entity-level pattern memory from disk."""
+    if not PATTERNS_FILE.exists():
+        return {"version": 1, "entities": {}}
+    try:
+        return json.loads(PATTERNS_FILE.read_text())
+    except Exception:
+        return {"version": 1, "entities": {}}
+
+
+def save_patterns(data: dict) -> None:
+    PATTERNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(PATTERNS_FILE) + ".tmp"
+    Path(tmp).write_text(json.dumps(data, separators=(",", ":")))
+    os.replace(tmp, PATTERNS_FILE)
+
+
+def extract_entities(name: str) -> set[str]:
+    """Extract distinctive proper nouns and years from an event name."""
+    entities: set[str] = set()
+    for word in re.findall(r'\b[A-Z][a-z]{2,}\b|\b\d{4}\b', name):
+        entities.add(word.lower())
+    return entities
+
+
+def check_pattern(patterns: dict, sport: str, ma: dict, mb: dict) -> bool:
+    """Return True if this pair matches a known confirmed entity pattern.
+
+    Requires ≥2 shared proper-noun entities that have been seen confirmed before
+    in the same sport. Avoids LLM call for obviously-repeated categories.
+    """
+    ea = extract_entities(ma["event_name"])
+    eb = extract_entities(mb["event_name"])
+    shared = ea & eb
+    if len(shared) < 2:
+        return False
+    for entry in patterns.get("entities", {}).values():
+        if entry.get("sport") != sport:
+            continue
+        pattern_ents = set(entry.get("keywords", []))
+        if len(shared & pattern_ents) >= min(2, len(pattern_ents)):
+            log.debug("Pattern match (skip LLM): %s", sorted(shared & pattern_ents))
+            return True
+    return False
+
+
+def record_pattern(patterns: dict, sport: str, ma: dict, mb: dict) -> None:
+    """Add a confirmed pair's entity fingerprint to pattern memory."""
+    ea = extract_entities(ma["event_name"])
+    eb = extract_entities(mb["event_name"])
+    shared = ea & eb
+    if len(shared) < 2:
+        return
+    key = "::".join(sorted(shared))
+    entry = patterns.setdefault("entities", {}).setdefault(key, {
+        "sport": sport, "keywords": sorted(shared), "match_count": 0, "examples": [],
+    })
+    entry["match_count"] = entry.get("match_count", 0) + 1
+    ex = f"{ma['market_id'][:25]}__{mb['market_id'][:25]}"
+    if ex not in entry["examples"]:
+        entry["examples"] = (entry["examples"] + [ex])[-10:]
+    entry["last_updated"] = time.time()
 
 
 def load_brain() -> dict[tuple[str, str], bool]:
@@ -200,10 +265,12 @@ def ask_llm_prediction(client: anthropic.Anthropic,
 
 def run_cycle(client: anthropic.Anthropic) -> int:
     """One matching cycle. Returns number of new confirmed pairs found."""
-    known = load_brain()
+    known    = load_brain()
+    patterns = load_patterns()
     new_pairs: dict[tuple[str, str], bool] = {}
     calls = 0
     total_new = 0
+    pattern_hits = 0
 
     for sport, cache_a, cache_b in SPORT_PAIRS:
         if calls >= MAX_CALLS:
@@ -222,7 +289,6 @@ def run_cycle(client: anthropic.Anthropic) -> int:
                 id_a, id_b = ma["market_id"], mb["market_id"]
                 key = (id_a, id_b) if id_a <= id_b else (id_b, id_a)
                 if key not in known and key not in new_pairs:
-                    # Quick title filter: skip if no word overlap (fast pre-filter)
                     words_a = set(ma["event_name"].lower().split())
                     words_b = set(mb["event_name"].lower().split())
                     stopwords = {"will", "the", "a", "to", "in", "of", "vs", "win",
@@ -244,24 +310,49 @@ def run_cycle(client: anthropic.Anthropic) -> int:
             if calls >= MAX_CALLS:
                 break
             batch = candidates[i:i + BATCH_SIZE]
-            if sport == "prediction":
-                results = ask_llm_prediction(client, batch)
-            else:
-                results = ask_llm_sports(client, batch)
-            calls += 1
 
-            for (ma, mb), result in zip(batch, results):
+            # Split: auto-confirm via pattern memory vs. send to LLM
+            auto_confirm: list[tuple[dict, dict]] = []
+            needs_llm:    list[tuple[dict, dict]] = []
+            for pair in batch:
+                if check_pattern(patterns, sport, pair[0], pair[1]):
+                    auto_confirm.append(pair)
+                else:
+                    needs_llm.append(pair)
+
+            # Auto-confirmed — no LLM call needed
+            for ma, mb in auto_confirm:
                 id_a, id_b = ma["market_id"], mb["market_id"]
                 key = (id_a, id_b) if id_a <= id_b else (id_b, id_a)
-                new_pairs[key] = result
-                if result:
-                    total_new += 1
-                    log.info("NEW PAIR: \"%s\" <-> \"%s\"",
-                             ma["event_name"][:50], mb["event_name"][:50])
+                new_pairs[key] = True
+                total_new += 1
+                pattern_hits += 1
+                log.info("PATTERN MATCH (no LLM): \"%s\" <-> \"%s\"",
+                         ma["event_name"][:50], mb["event_name"][:50])
+
+            # Send unknowns to LLM
+            if needs_llm:
+                if sport == "prediction":
+                    results = ask_llm_prediction(client, needs_llm)
+                else:
+                    results = ask_llm_sports(client, needs_llm)
+                calls += 1
+
+                for (ma, mb), result in zip(needs_llm, results):
+                    id_a, id_b = ma["market_id"], mb["market_id"]
+                    key = (id_a, id_b) if id_a <= id_b else (id_b, id_a)
+                    new_pairs[key] = result
+                    if result:
+                        total_new += 1
+                        record_pattern(patterns, sport, ma, mb)
+                        log.info("NEW PAIR (LLM): \"%s\" <-> \"%s\"",
+                                 ma["event_name"][:50], mb["event_name"][:50])
 
     if new_pairs:
         save_pairs(new_pairs)
-        log.info("Saved %d new pairs to brain (%d confirmed matches)", len(new_pairs), total_new)
+        save_patterns(patterns)
+        log.info("Saved %d new pairs (%d confirmed, %d from pattern memory, %d LLM calls)",
+                 len(new_pairs), total_new, pattern_hits, calls)
 
     return total_new
 

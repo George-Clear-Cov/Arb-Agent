@@ -71,6 +71,30 @@ class Store:
                 actual_profit REAL,
                 settled_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS tracked_pairs (
+                pair_key    TEXT PRIMARY KEY,
+                market_name TEXT,
+                platform_a  TEXT,
+                platform_b  TEXT,
+                market_id_a TEXT,
+                market_id_b TEXT,
+                confirmed_at INTEGER,
+                expires_at  INTEGER,
+                current_margin REAL DEFAULT 0,
+                peak_margin    REAL DEFAULT 0,
+                total_samples  INTEGER DEFAULT 0,
+                last_updated   INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS pair_price_history (
+                pair_key TEXT    NOT NULL,
+                ts       INTEGER NOT NULL,
+                price_a  REAL,
+                price_b  REAL,
+                margin   REAL,
+                PRIMARY KEY (pair_key, ts)
+            );
         """)
         await self._migrate()
         await self._db.commit()
@@ -285,6 +309,83 @@ class Store:
             for row in rows
         ]
 
+    # ── Pair tracking ──────────────────────────────────────────────────────
+
+    async def upsert_tracked_pair(
+        self,
+        pair_key: str,
+        market_name: str,
+        platform_a: str,
+        platform_b: str,
+        market_id_a: str,
+        market_id_b: str,
+        price_a: float,
+        price_b: float,
+        margin: float,
+        expires_at: int | None = None,
+        confirmed_at: int | None = None,
+    ) -> None:
+        import time as _time
+        now = int(_time.time())
+        await self._db.execute(
+            """INSERT INTO tracked_pairs
+               (pair_key, market_name, platform_a, platform_b, market_id_a, market_id_b,
+                confirmed_at, expires_at, current_margin, peak_margin, total_samples, last_updated)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+               ON CONFLICT(pair_key) DO UPDATE SET
+                 current_margin = excluded.current_margin,
+                 peak_margin    = MAX(peak_margin, excluded.current_margin),
+                 total_samples  = total_samples + 1,
+                 last_updated   = excluded.last_updated,
+                 expires_at     = COALESCE(excluded.expires_at, expires_at)""",
+            (pair_key, market_name, platform_a, platform_b,
+             market_id_a, market_id_b,
+             confirmed_at or now, expires_at, margin, margin, now),
+        )
+        await self._db.execute(
+            "INSERT OR REPLACE INTO pair_price_history (pair_key, ts, price_a, price_b, margin) VALUES (?,?,?,?,?)",
+            (pair_key, now, price_a, price_b, margin),
+        )
+        # Prune history older than 7 days
+        await self._db.execute(
+            "DELETE FROM pair_price_history WHERE pair_key = ? AND ts < ?",
+            (pair_key, now - 7 * 86400),
+        )
+        await self._db.commit()
+
+    async def get_tracked_pairs(self) -> list[dict]:
+        import time as _time
+        now = int(_time.time())
+        async with self._db.execute(
+            """SELECT t.*,
+                      (SELECT json_group_array(json_object('ts',ts,'price_a',price_a,'price_b',price_b,'margin',margin))
+                       FROM (SELECT ts,price_a,price_b,margin FROM pair_price_history
+                             WHERE pair_key=t.pair_key ORDER BY ts DESC LIMIT 200)) AS history
+               FROM tracked_pairs t
+               WHERE t.expires_at IS NULL OR t.expires_at > ?
+               ORDER BY t.current_margin DESC""",
+            (now,),
+        ) as cur:
+            rows = await cur.fetchall()
+        result = []
+        for r in rows:
+            history = json.loads(r["history"] or "[]")
+            result.append({
+                "pair_key":       r["pair_key"],
+                "market_name":    r["market_name"],
+                "platform_a":     r["platform_a"],
+                "platform_b":     r["platform_b"],
+                "market_id_a":    r["market_id_a"],
+                "market_id_b":    r["market_id_b"],
+                "current_margin": round((r["current_margin"] or 0) * 100, 2),
+                "peak_margin":    round((r["peak_margin"] or 0) * 100, 2),
+                "total_samples":  r["total_samples"],
+                "expires_at":     r["expires_at"],
+                "last_updated":   r["last_updated"],
+                "price_history":  list(reversed(history)),
+            })
+        return result
+
     async def get_portfolio_stats(self, starting_balance: float) -> dict:
         balance = await self.get_balance(starting_balance)
         async with self._db.execute(
@@ -331,7 +432,7 @@ def _row_to_arb(row) -> ArbOpportunity:
         sport=row["sport"],
         event_name=row["event_name"],
         market_type=row["market_type"],
-        gross_margin=row.get("gross_margin") or row["margin"],
+        gross_margin=(row["gross_margin"] if "gross_margin" in row.keys() else None) or row["margin"],
         margin=row["margin"],
         total_stake=row["total_stake"],
         legs=_parse_legs(row["legs_json"]),
