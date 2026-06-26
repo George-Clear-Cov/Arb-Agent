@@ -69,6 +69,51 @@ def _earliest_expiry(markets: list[Market]) -> datetime | None:
     return min(times) if times else None
 
 
+def detect_arbs_with_groups(
+    markets: list[Market],
+    min_margin: float = 0.01,
+    total_stake: float = 100.0,
+    min_liquidity: float = MIN_OUTCOME_LIQUIDITY,
+) -> tuple[list[ArbOpportunity], list[list[Market]]]:
+    """Like detect_arbs but also returns the matched groups for pair registration."""
+    groups = group_matching_markets(markets)
+    arbs: list[ArbOpportunity] = []
+    for group in groups:
+        opp = _check_back_arb(group, min_margin, total_stake, min_liquidity)
+        if opp:
+            arbs.append(opp)
+    now = datetime.now(tz=timezone.utc)
+    live_arbs = []
+    for a in arbs:
+        exp = a.expires_at
+        if exp is not None:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= now:
+                continue
+        live_arbs.append(a)
+    _now = datetime.now(tz=timezone.utc)
+
+    def _sort_key(a: ArbOpportunity) -> tuple:
+        exp = a.expires_at
+        if exp is None:
+            bucket = 3
+        else:
+            fat = exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)
+            secs = (fat - _now).total_seconds()
+            if secs < 6 * 3600:
+                bucket = 0
+            elif secs < 24 * 3600:
+                bucket = 1
+            elif secs < 7 * 24 * 3600:
+                bucket = 2
+            else:
+                bucket = 3
+        return (bucket, -a.margin)
+
+    return sorted(live_arbs, key=_sort_key), groups
+
+
 def detect_arbs(
     markets: list[Market],
     min_margin: float = 0.01,
